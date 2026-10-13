@@ -1,0 +1,17 @@
+# imc / .gitignore
+#
+# 方針: ~/.claude/CLAUDE.md 大前提1,2 と同じ。
+# 機密情報・巨大な二次情報(生データ・索引・ログ)はuntrack、それ以外は追跡する。
+
+# --- 機密情報 ---
+.env
+.env.*
+!.env.template
+!.env.*.template
+
+# --- 二次情報: IMAPの複製・notmuch索引・生成設定・ログ。すべて再生成可能 ---
+_var/
+
+# --- Python キャッシュ ---
+**/__pycache__/
+*.pyc

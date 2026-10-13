@@ -1,0 +1,30 @@
+# Sender and subject rules that decide which messages need action.
+# Applied to the whole database by imc_tag_apply.sh, so a change here is
+# always re-applied to past mail as well. Compare before and after; do not
+# judge a rule by reading it.
+#
+# Columns are tab separated:
+#   tag     the notmuch tag to add. Tags listed here are owned by this file:
+#           imc_tag_apply.sh removes them from every message before it
+#           re-adds them, so deleting a line really does undo it. Tags that
+#           do not appear in this file (done, later, ...) are never touched.
+#   field   from, subject, or to
+#   regex   case insensitive extended regular expression, matched with ~
+#   comment why this rule exists. Future you will ask.
+#
+# THIS FILE IS COMMITTED TO GIT. A "from" rule naming your real bank records
+# which bank you use. The subject rules below are generic and safe to commit;
+# the sender rules are left as commented placeholders on purpose. Decide for
+# yourself whether to put real domains here or to keep this file untracked.
+#
+# Sender rules are the reliable path: a bank that changes its subject lines
+# still matches on its domain. Fill these in before trusting this system.
+#
+# tag	field	regex	comment
+#actionable	from	@your-bank\.example$	米国銀行。ログイン通知を見逃すと口座が無効化される
+#actionable	from	@your-other-bank\.example$	米国銀行
+#actionable	from	@your-tax-authority\.example$	税務。期限が絶対
+#actionable	from	@your-mail-host\.example$	自前サーバーの証明書・ディスク警告
+actionable	subject	(sign-?in|log-?in|sign-?on) (from|attempt|alert|notice)	ログイン通知は差出人を問わず拾う
+actionable	subject	(expir|suspend|deactivat|locked|unauthoriz)	失効・停止・凍結・不正利用の予告
+actionable	subject	(verify your|confirm your) (account|identity)	本人確認要求
