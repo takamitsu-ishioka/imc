@@ -171,6 +171,10 @@ umask 077
   echo "# Sync Pull / Remove None / Expunge None means this never writes to the"
   echo "# remote server and never deletes local mail, so the Maildir is an archive."
   echo "# IMAP accounts only; POP3 accounts are handled by getmail (see getmail/)."
+  echo "# PATTERNS defaults to * (every folder). Gmail exposes synthetic folders"
+  echo "# ([Gmail]/All Mail duplicates the entire mailbox, plus Sent/Spam/Trash),"
+  echo "# so a Gmail account should set IMC_ACCOUNT_<name>_PATTERNS=\"INBOX\" in"
+  echo "# .env to avoid downloading the whole mailbox history repeatedly."
   echo
   for account in "${imap_accounts[@]}"; do
     host="IMC_ACCOUNT_${account}_HOST"
@@ -178,6 +182,8 @@ umask 077
     user="IMC_ACCOUNT_${account}_USER"
     tlstype="IMC_ACCOUNT_${account}_TLSTYPE"
     certfile="IMC_ACCOUNT_${account}_CERTIFICATEFILE"
+    patterns_name="IMC_ACCOUNT_${account}_PATTERNS"
+    patterns="${!patterns_name:-*}"
     echo "IMAPAccount $account"
     echo "Host ${!host}"
     echo "Port ${!port}"
@@ -201,7 +207,7 @@ umask 077
     echo "Channel $account"
     echo "Far :${account}-remote:"
     echo "Near :${account}-local:"
-    echo "Patterns *"
+    echo "Patterns $patterns"
     echo "Create Near"
     echo "Sync Pull"
     echo "Remove None"
