@@ -1,13 +1,19 @@
 """Re-apply the sender and subject rules to every message given on stdin.
 
 Called only through imc_tag_apply.sh, which validates the arguments.
-Arguments: <notmuch_config> <rules_file> <apply|dry-run>
+Arguments: <notmuch_config> <apply|dry-run> <rules_file>...
 Stdin: the JSON output of imc_mail_list.sh
 Stdout: the change plan as TSV (message_id, operation, tag)
 
-Tags named in the rules file are owned by the rules file: a message that no
-longer matches loses the tag. Tags that are not named there are never
-touched, so hand made tags such as done survive.
+One or more rules files are accepted, so an identifying sender rule (which
+would reveal, e.g., which bank you use, if committed to a public repo) can
+live in a second, gitignored file (tag_rules.local.tsv) while the generic,
+committed tag_rules.tsv stays safe to publish. Rules from every file are
+merged; a tag is "owned" (see below) by whichever file(s) mention it.
+
+Tags named in a rules file are owned by that file: a message that no longer
+matches loses the tag. Tags that are not named anywhere are never touched,
+so hand made tags such as done survive.
 """
 import json
 import os
@@ -73,19 +79,27 @@ def quote_message_id(message_id):
 
 
 def main(argv):
-    config_path, rules_path, mode = argv[1], argv[2], argv[3]
+    config_path, mode, rules_paths = argv[1], argv[2], argv[3:]
 
-    try:
-        rules, owned = load_rules(rules_path)
-    except (OSError, ValueError) as error:
-        stderr(str(error))
-        stderr("Next: fix %s and rerun." % rules_path)
-        return 1
+    rules = []
+    owned = []
+    for rules_path in rules_paths:
+        try:
+            file_rules, file_owned = load_rules(rules_path)
+        except (OSError, ValueError) as error:
+            stderr(str(error))
+            stderr("Next: fix %s and rerun." % rules_path)
+            return 1
+        rules.extend(file_rules)
+        for tag in file_owned:
+            if tag not in owned:
+                owned.append(tag)
     if not rules:
-        stderr("%s contains no rules." % rules_path)
+        stderr("%s contains no rules." % ", ".join(rules_paths))
         stderr("Next: add at least one rule line, or stop calling this script.")
         return 1
-    stderr("Loaded %d rules owning %d tags: %s" % (len(rules), len(owned), ", ".join(owned)))
+    stderr("Loaded %d rules from %s, owning %d tags: %s"
+           % (len(rules), ", ".join(rules_paths), len(owned), ", ".join(owned)))
 
     try:
         records = json.load(sys.stdin)
@@ -134,7 +148,7 @@ def main(argv):
 
     if not operations:
         stderr("Nothing to change; the index already matches the rules.")
-        stderr("Next: edit %s if you expected a change." % rules_path)
+        stderr("Next: edit %s if you expected a change." % ", ".join(rules_paths))
         return 0
 
     batch = "".join(

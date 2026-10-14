@@ -15,9 +15,9 @@ message body, attachments and URLs are never included.
 import json
 import sys
 
-MAX_LINES = 12
-MAX_SUBJECT = 70
-MAX_SENDER = 28
+MAX_LINES = 10
+MAX_SUBJECT = 100
+MAX_SENDER = 40
 
 
 def one_line_note(note):
@@ -53,10 +53,14 @@ def main(argv):
         return 0
 
     lines = ["要対応 %d件 / 全体 %s件" % (len(records), total), ""]
-    for record in records[:MAX_LINES]:
-        lines.append("- %s: %s" % (sender_of(record), shorten(record.get("subject", ""), MAX_SUBJECT) or "(件名なし)"))
+    for index, record in enumerate(records[:MAX_LINES], start=1):
+        lines.append("%d. %s" % (index, sender_of(record)))
+        lines.append("   %s" % (shorten(record.get("subject", ""), MAX_SUBJECT) or "(件名なし)"))
+        lines.append("")
     if len(records) > MAX_LINES:
-        lines.append("- ほか %d件" % (len(records) - MAX_LINES))
+        lines.append("...ほか %d件" % (len(records) - MAX_LINES))
+    else:
+        lines.pop()  # drop the trailing blank line after the last entry
 
     print("\n".join(prefix + lines))
     return 0

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Make this directory usable in one command, idempotently.
-# Installs isync, notmuch and neomutt, creates _var/, and regenerates
-# _var/mbsyncrc and _var/notmuch-config from .env. Safe to run again after
+# Installs isync, getmail6, notmuch and neomutt, creates _var/, and
+# regenerates _var/mbsyncrc (IMAP accounts), _var/getmail/getmailrc-<account>
+# (POP3 accounts) and _var/notmuch-config from .env. Safe to run again after
 # editing .env, for example to add a second account.
 # Everything it creates lives under _var/ and can be deleted and rebuilt.
 set -euo pipefail
@@ -11,9 +12,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/.env"
 VAR_DIR="$SCRIPT_DIR/_var"
 MAILDIR="$VAR_DIR/maildir"
+GETMAIL_DIR="$VAR_DIR/getmail"
 MBSYNCRC="$VAR_DIR/mbsyncrc"
 NOTMUCH_CONFIG_FILE="$VAR_DIR/notmuch-config"
-PACKAGES="isync notmuch neomutt"
+PACKAGES="isync getmail6 notmuch neomutt"
 
 usage() {
   echo "$SCRIPT_NAME: $1" >&2
@@ -60,13 +62,15 @@ for name in IMC_USER_NAME IMC_USER_PRIMARY_EMAIL IMC_ACCOUNTS; do
 done
 
 read -r -a accounts <<<"$IMC_ACCOUNTS"
+imap_accounts=()
+pop3_accounts=()
 for account in "${accounts[@]}"; do
   if [[ ! "$account" =~ ^[a-z0-9_]+$ ]]; then
     echo "$SCRIPT_NAME: Account name '$account' must match [a-z0-9_]+." >&2
     echo "Next: fix IMC_ACCOUNTS in $ENV_FILE and retry." >&2
     exit 1
   fi
-  for suffix in HOST PORT USER PASSWORD TLSTYPE; do
+  for suffix in HOST PORT USER PASSWORD PROTOCOL; do
     name="IMC_ACCOUNT_${account}_${suffix}"
     if [ -z "${!name-}" ]; then
       echo "$SCRIPT_NAME: $name is missing or empty in $ENV_FILE." >&2
@@ -74,11 +78,32 @@ for account in "${accounts[@]}"; do
       exit 1
     fi
   done
-  tlstype_name="IMC_ACCOUNT_${account}_TLSTYPE"
-  case "${!tlstype_name}" in
-    IMAPS|STARTTLS) ;;
+  protocol_name="IMC_ACCOUNT_${account}_PROTOCOL"
+  case "${!protocol_name}" in
+    IMAP)
+      imap_accounts+=("$account")
+      tlstype_name="IMC_ACCOUNT_${account}_TLSTYPE"
+      if [ -z "${!tlstype_name-}" ]; then
+        echo "$SCRIPT_NAME: $tlstype_name is missing or empty in $ENV_FILE." >&2
+        echo "Next: edit $ENV_FILE and retry." >&2
+        exit 1
+      fi
+      case "${!tlstype_name}" in
+        IMAPS|STARTTLS) ;;
+        *)
+          echo "$SCRIPT_NAME: $tlstype_name must be IMAPS or STARTTLS." >&2
+          echo "Next: edit $ENV_FILE and retry." >&2
+          exit 1
+          ;;
+      esac
+      ;;
+    POP3)
+      # POP3 is always over SSL (SimplePOP3SSLRetriever); plaintext POP3 is
+      # not offered. CERTIFICATEFILE is optional, same as for IMAP accounts.
+      pop3_accounts+=("$account")
+      ;;
     *)
-      echo "$SCRIPT_NAME: $tlstype_name must be IMAPS or STARTTLS." >&2
+      echo "$SCRIPT_NAME: $protocol_name must be IMAP or POP3." >&2
       echo "Next: edit $ENV_FILE and retry." >&2
       exit 1
       ;;
@@ -93,8 +118,8 @@ for package in $PACKAGES; do
 done
 missing_packages="${missing_packages# }"
 
-echo "Input:  $ENV_FILE, accounts=${accounts[*]}" >&2
-echo "Output: $VAR_DIR/{maildir,notmuch,log}, $MBSYNCRC, $NOTMUCH_CONFIG_FILE" >&2
+echo "Input:  $ENV_FILE, IMAP accounts=${imap_accounts[*]:-(none)}, POP3 accounts=${pop3_accounts[*]:-(none)}" >&2
+echo "Output: $VAR_DIR/{maildir,notmuch,log,getmail}, $MBSYNCRC, $NOTMUCH_CONFIG_FILE" >&2
 if [ -n "$missing_packages" ]; then
   echo "Output: apt-get install of${missing_packages:+ }$missing_packages (needs sudo)" >&2
 else
@@ -128,8 +153,16 @@ if [ -n "$missing_packages" ]; then
   sudo DEBIAN_FRONTEND=noninteractive apt-get install --yes --quiet $missing_packages
 fi
 
-mkdir --parents "$MAILDIR" "$VAR_DIR/notmuch" "$VAR_DIR/log"
+mkdir --parents "$MAILDIR" "$VAR_DIR/notmuch" "$VAR_DIR/log" "$GETMAIL_DIR"
 chmod 700 "$VAR_DIR"
+
+# mbsync の MaildirStore も getmail の Maildir destination も、Path の
+# トップディレクトリ自体(cur/new/tmpを含む完全なMaildir構造)が事前に存在
+# することを要求する(どちらも中身を作るだけで、store自体は作らない)。
+# アカウントごとに先に作っておく。
+for account in "${accounts[@]}"; do
+  mkdir --parents "$MAILDIR/$account/cur" "$MAILDIR/$account/new" "$MAILDIR/$account/tmp"
+done
 
 umask 077
 {
@@ -137,8 +170,9 @@ umask 077
   echo "# Passwords are never stored here; PassCmd reads them from .env at run time."
   echo "# Sync Pull / Remove None / Expunge None means this never writes to the"
   echo "# remote server and never deletes local mail, so the Maildir is an archive."
+  echo "# IMAP accounts only; POP3 accounts are handled by getmail (see getmail/)."
   echo
-  for account in "${accounts[@]}"; do
+  for account in "${imap_accounts[@]}"; do
     host="IMC_ACCOUNT_${account}_HOST"
     port="IMC_ACCOUNT_${account}_PORT"
     user="IMC_ACCOUNT_${account}_USER"
@@ -149,7 +183,7 @@ umask 077
     echo "Port ${!port}"
     echo "User ${!user}"
     echo "PassCmd \"+$SCRIPT_DIR/imc_secret_get.sh IMC_ACCOUNT_${account}_PASSWORD\""
-    echo "TLSType ${!tlstype}"
+    echo "SSLType ${!tlstype}"
     if [ -n "${!certfile-}" ]; then
       echo "CertificateFile ${!certfile}"
     else
@@ -177,6 +211,45 @@ umask 077
   done
 } > "$MBSYNCRC"
 chmod 600 "$MBSYNCRC"
+
+# getmail では IMAP とは別物の POP3 専用アカウントを扱う。mbsync が決して
+# POP3 を話せないための分岐であり、1アカウント1rcfileがgetmailの作法。
+for account in "${pop3_accounts[@]}"; do
+  host="IMC_ACCOUNT_${account}_HOST"
+  port="IMC_ACCOUNT_${account}_PORT"
+  user="IMC_ACCOUNT_${account}_USER"
+  certfile="IMC_ACCOUNT_${account}_CERTIFICATEFILE"
+  getmailrc="$GETMAIL_DIR/getmailrc-$account"
+  {
+    echo "# Generated by $SCRIPT_NAME from $ENV_FILE. Do not edit; edit .env and rerun."
+    echo "# delete = false: this never deletes mail from the server, mirroring"
+    echo "# mbsync's Remove None/Expunge None policy for IMAP accounts."
+    echo "# read_all = false: only messages not yet in the oldmail state under"
+    echo "# $GETMAIL_DIR are retrieved. The combination read_all=true (the"
+    echo "# getmail default) + delete=false makes getmail re-fetch and"
+    echo "# re-deliver every message on every run -- getmail itself warns"
+    echo "# about this combination at run time."
+    echo "[retriever]"
+    echo "type = SimplePOP3SSLRetriever"
+    echo "server = ${!host}"
+    echo "port = ${!port}"
+    echo "username = ${!user}"
+    echo "password_command = (\"$SCRIPT_DIR/imc_secret_get.sh\", \"IMC_ACCOUNT_${account}_PASSWORD\")"
+    if [ -n "${!certfile-}" ]; then
+      echo "ca_certs = ${!certfile}"
+    fi
+    echo
+    echo "[destination]"
+    echo "type = Maildir"
+    echo "path = $MAILDIR/$account/"
+    echo
+    echo "[options]"
+    echo "verbose = 1"
+    echo "delete = false"
+    echo "read_all = false"
+  } > "$getmailrc"
+  chmod 600 "$getmailrc"
+done
 
 {
   echo "# Generated by $SCRIPT_NAME from $ENV_FILE. Do not edit; edit .env and rerun."

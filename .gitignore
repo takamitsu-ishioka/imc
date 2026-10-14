@@ -9,8 +9,19 @@
 !.env.template
 !.env.*.template
 
+# --- 個人を特定しうる情報: 「どの銀行を使っているか」等の送信者ルール。
+#     tag_rules.tsv(公開・汎用)とは分離する。imc_tag_apply.sh/imc_morning_run.sh
+#     の両方に対応済み ---
+tag_rules.local.tsv
+!tag_rules.local.tsv.template
+
 # --- 二次情報: IMAPの複製・notmuch索引・生成設定・ログ。すべて再生成可能 ---
 _var/
+
+# --- DJC手順(design.md 7節)で作る一時スクラッチファイル。コミット対象外 ---
+before.tsv
+after.tsv
+plan.tsv
 
 # --- Python キャッシュ ---
 **/__pycache__/

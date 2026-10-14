@@ -1,0 +1,10 @@
+# Copy this file to tag_rules.local.tsv in the same directory. That file is
+# gitignored (see .gitignore) and never committed, so identifying sender
+# rules (e.g. "which bank do you use") can live here instead of in the
+# public tag_rules.tsv.
+#
+# Same format as tag_rules.tsv: tag<TAB>field<TAB>regex<TAB>comment
+# field is one of: from, subject, to
+#
+# tag	field	regex	comment
+#actionable	from	@notifications\.usbank\.com$	U.S. Bank

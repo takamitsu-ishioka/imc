@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Re-apply a rules file to every message handed to it on stdin, so that a
-# rule change always reaches past mail as well as new mail.
-# Tags named in the rules file are owned by it and are removed when a message
-# stops matching. Tags not named there, such as done, are never touched.
+# Re-apply one or more rules files to every message handed to it on stdin,
+# so that a rule change always reaches past mail as well as new mail.
+# Tags named in a rules file are owned by it and are removed when a message
+# stops matching. Tags not named anywhere, such as done, are never touched.
+# Pass tag_rules.tsv and, if it exists, tag_rules.local.tsv (gitignored) to
+# keep identifying sender rules out of this public repository.
 # Reads the JSON output of imc_mail_list.sh on stdin and writes the change
 # plan to stdout as TSV.
 set -euo pipefail
@@ -13,9 +15,9 @@ NOTMUCH_CONFIG_FILE="$SCRIPT_DIR/_var/notmuch-config"
 
 usage() {
   echo "$SCRIPT_NAME: $1" >&2
-  echo "usage: $SCRIPT_NAME <rules_file> [--dry-run] [--confirm]" >&2
+  echo "usage: $SCRIPT_NAME <rules_file>... [--dry-run] [--confirm]" >&2
   echo "example: $SCRIPT_NAME tag_rules.tsv --dry-run < all.json" >&2
-  echo "example: imc_mail_list.sh '*' json | $SCRIPT_NAME tag_rules.tsv --confirm" >&2
+  echo "example: imc_mail_list.sh '*' json | $SCRIPT_NAME tag_rules.tsv tag_rules.local.tsv --confirm" >&2
   awk 'NR==1{next} /^#/{sub(/^# ?/, ""); print; next} {exit}' "${BASH_SOURCE[0]}" >&2
   echo "Next: pipe the full message list in, not a filtered one, or messages outside the filter keep stale tags." >&2
 }
@@ -32,16 +34,18 @@ for arg in "$@"; do
   esac
 done
 
-if [ "${#args[@]}" -ne 1 ]; then
+if [ "${#args[@]}" -lt 1 ]; then
   usage "Wrong number of arguments"
   exit 1
 fi
-rules_file="${args[0]}"
+rules_files=("${args[@]}")
 
-if [ ! -f "$rules_file" ]; then
-  usage "$rules_file not found"
-  exit 1
-fi
+for rules_file in "${rules_files[@]}"; do
+  if [ ! -f "$rules_file" ]; then
+    usage "$rules_file not found"
+    exit 1
+  fi
+done
 if [ ! -f "$NOTMUCH_CONFIG_FILE" ]; then
   usage "$NOTMUCH_CONFIG_FILE not found"
   exit 1
@@ -51,7 +55,7 @@ if [ -t 0 ]; then
   exit 1
 fi
 
-echo "Input:  rules=$rules_file, messages=JSON on stdin" >&2
+echo "Input:  rules=${rules_files[*]}, messages=JSON on stdin" >&2
 if "$dry_run"; then
   echo "Output: change plan on stdout only; the notmuch index is left alone" >&2
 else
@@ -64,7 +68,7 @@ if "$confirm" && ! "$dry_run"; then
     echo "Next: rerun from a terminal, or omit --confirm." >&2
     exit 1
   fi
-  read -r -p "Re-tag every message according to $rules_file? [y/N] " answer </dev/tty
+  read -r -p "Re-tag every message according to ${rules_files[*]}? [y/N] " answer </dev/tty
   if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
     echo "$SCRIPT_NAME: Aborted; the notmuch index was not changed." >&2
     echo "Next: rerun when you are ready." >&2
@@ -75,4 +79,4 @@ fi
 mode="apply"
 "$dry_run" && mode="dry-run"
 
-exec python3 "$SCRIPT_DIR/imc_tag_apply.py" "$NOTMUCH_CONFIG_FILE" "$rules_file" "$mode"
+exec python3 "$SCRIPT_DIR/imc_tag_apply.py" "$NOTMUCH_CONFIG_FILE" "$mode" "${rules_files[@]}"

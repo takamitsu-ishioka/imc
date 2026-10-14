@@ -39,8 +39,13 @@ if ! "$SCRIPT_DIR/imc_mail_sync.sh" all; then
   echo "$(stamp) $SCRIPT_NAME: sync failed; continuing so that a notification is still sent" >&2
 fi
 
+rules_files=("$SCRIPT_DIR/tag_rules.tsv")
+if [ -f "$SCRIPT_DIR/tag_rules.local.tsv" ]; then
+  rules_files+=("$SCRIPT_DIR/tag_rules.local.tsv")
+fi
+
 if ! "$SCRIPT_DIR/imc_mail_list.sh" '*' json \
-  | "$SCRIPT_DIR/imc_tag_apply.sh" "$SCRIPT_DIR/tag_rules.tsv" >/dev/null; then
+  | "$SCRIPT_DIR/imc_tag_apply.sh" "${rules_files[@]}" >/dev/null; then
   sync_note="${sync_note}${sync_note:+ }仕分けに失敗しました。"
   echo "$(stamp) $SCRIPT_NAME: tagging failed; continuing" >&2
 fi

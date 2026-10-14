@@ -12,19 +12,27 @@
 #   regex   case insensitive extended regular expression, matched with ~
 #   comment why this rule exists. Future you will ask.
 #
-# THIS FILE IS COMMITTED TO GIT. A "from" rule naming your real bank records
-# which bank you use. The subject rules below are generic and safe to commit;
-# the sender rules are left as commented placeholders on purpose. Decide for
-# yourself whether to put real domains here or to keep this file untracked.
+# THIS FILE IS COMMITTED TO GIT and is public. Keep rules here generic
+# (subject-based) so that nothing here identifies which bank, which tax
+# authority, etc. you use.
 #
-# Sender rules are the reliable path: a bank that changes its subject lines
-# still matches on its domain. Fill these in before trusting this system.
+# A bare sender rule ("from @bank.example$") was the original plan, but
+# real-world testing (two actual U.S. Bank emails) showed it is too broad:
+# "Here's the security code you requested" and "Your e-statement is ready."
+# come from the exact same sender, yet only the first needs action. Subject
+# rules turned out to be both more precise AND privacy-safe here, so they
+# are the primary mechanism, not a fallback.
+#
+# If a sender truly needs a blanket rule despite that risk (no good subject
+# pattern exists), put it in tag_rules.local.tsv instead (gitignored; copy
+# tag_rules.local.tsv.template to create it). imc_tag_apply.sh merges both
+# files when both are passed to it.
 #
 # tag	field	regex	comment
-#actionable	from	@your-bank\.example$	米国銀行。ログイン通知を見逃すと口座が無効化される
-#actionable	from	@your-other-bank\.example$	米国銀行
-#actionable	from	@your-tax-authority\.example$	税務。期限が絶対
-#actionable	from	@your-mail-host\.example$	自前サーバーの証明書・ディスク警告
 actionable	subject	(sign-?in|log-?in|sign-?on) (from|attempt|alert|notice)	ログイン通知は差出人を問わず拾う
 actionable	subject	(expir|suspend|deactivat|locked|unauthoriz)	失効・停止・凍結・不正利用の予告
 actionable	subject	(verify your|confirm your) (account|identity)	本人確認要求
+actionable	subject	(security code|verification code|one-time (code|passcode|password)|passcode)	確認コード・認証コード通知(実例: U.S. Bank "security code you requested")
+actionable	subject	(action required|action may be required)	クラウド事業者等の「対応が必要」通知(実例: AWS SES停止・SES審査中・RDS課金変更)
+actionable	subject	(要対応|対応が必要)	日本語の「要対応」通知(実例: AWS RDS PostgreSQL EOL)
+actionable	subject	^ALARM:	AWS CloudWatchアラーム発火(課金アラーム等、閾値超過。"Billing Statement/Tax Invoice Available"のような定期通知とは別物)

@@ -30,7 +30,8 @@
 |------|------|-----------|
 | メッセージ生データ | 各IMAPサーバー上のメール | 外部（送信者） |
 | 認証情報 | `.env` | **ユーザーが手で書く** |
-| 仕分けルール | `tag_rules.tsv` | ユーザー（AI Agentは提案のみ） |
+| 仕分けルール（公開可） | `tag_rules.tsv` | ユーザー（AI Agentは提案のみ） |
+| 仕分けルール（個人を特定しうる） | `tag_rules.local.tsv` | ユーザー（AI Agentは提案のみ） |
 
 `_var/maildir/` は IMAP の**複製**であって SSoT ではない。消しても mbsync で再生成できる。  
 ただし「送信元サーバーが消したメール」は複製にしか残らないため、実質的なアーカイブとして機能する。  
@@ -96,14 +97,16 @@ KB-000002 では「通知本文には固定文だけを使う」と決めた（C
 ```mermaid
 flowchart LR
   subgraph External["外部（SSoT）"]
-    S1[自前IMAP]
+    S1[自前IMAP<br/>starship.jp]
+    S5[Asahi Net<br/>POP3のみ]
     S2[Gmail IMAP]
     S3[Outlook IMAP<br/>OAuth2]
     S4[Teams<br/>Graph API]
   end
 
   subgraph Fetch["取得"]
-    MB[mbsync<br/>既製品]
+    MB[mbsync<br/>既製品・IMAP専用]
+    GM[getmail<br/>既製品・POP3専用]
     TG[teams取得<br/>自作・将来]
   end
 
@@ -111,7 +114,7 @@ flowchart LR
 
   subgraph Index["索引・仕分け"]
     NM[notmuch new]
-    TA[imc_tag_apply.sh<br/>tag_rules.tsv]
+    TA[imc_tag_apply.sh<br/>tag_rules.tsv (+.local)]
   end
 
   DB[("_var/notmuch/<br/>索引＋タグ")]
@@ -123,10 +126,12 @@ flowchart LR
   end
 
   S1 --> MB
+  S5 --> GM
   S2 --> MB
   S3 -.未実装.-> MB
   S4 -.未実装.-> TG
   MB --> MD
+  GM --> MD
   TG -.-> MD
   MD --> NM --> DB
   DB --> TA --> DB
@@ -137,6 +142,12 @@ flowchart LR
 
 自作するのは**薄い3枚**（sync / tag_apply / digest_notify）だけである。  
 取得も索引も閲覧も既製品に任せる。所有できない抽象は依存を最小化する（漆ノ型）。  
+
+mbsyncはIMAP専用で、POP3を一切話せない。Asahi Netのように**IMAPを提供しない
+（かつ管理者権限も無い）第三者ISP**が実在するため、POP3専用のgetmailを並行して
+使う。両者とも`imc_mail_sync.sh`が`.env`の`PROTOCOL`で振り分け、どちらも
+「サーバーから削除しない」ポリシーを守る（mbsyncの`Remove None`/getmailの
+`delete = false`）。notmuch以降のパイプラインはプロトコルを一切意識しない。  
 
 ## 6. 毎朝のシーケンス
 
@@ -190,15 +201,48 @@ diff before.tsv after.tsv
 - ルール由来: `tag_rules.tsv` の `tag` 列に書かれたもの
 - 人間由来: それ以外（`imc_tag_apply.sh` は触らない）
 
+### 件名ルール優先、送信者ルールは非公開ファイルへ
+
+実例（米国銀行からの実在のメール2件）で検証した結果、当初想定していた
+「送信者ドメインで確実に拾う」方針は**粗すぎる**ことが分かった。
+
+```
+"Here's the security code you requested"   ← 要対応
+"Your e-statement is ready."               ← 通常の通知、要対応ではない
+```
+
+両方とも同じ送信者（`notifications.usbank.com`）から届く。送信者だけで判定すると、
+2通目のような定期通知まで`actionable`になり、「鳴き過ぎる狼」になってしまう。
+
+件名ベースのルールは、この区別ができる上に**銀行名を特定しない**ため、
+`tag_rules.tsv`（public）にそのまま書ける。結果的に、送信者ルールより
+件名ルールの方が今回は本命になった。
+
+それでも件名に手がかりが無い送信者がどうしても出てきたら、`tag_rules.local.tsv`
+（`tag_rules.local.tsv.template`をコピーして作る。`.gitignore`対象）に書く。
+`imc_tag_apply.sh`は複数のルールファイルを受け取れる:
+
+```bash
+imc_mail_list.sh '*' json | imc_tag_apply.sh tag_rules.tsv tag_rules.local.tsv --confirm
+```
+
+`imc_morning_run.sh`は`tag_rules.local.tsv`が存在する場合のみ自動で追加する。
+
 ## 8. 段階
 
 | 段階 | 内容 | 状態 |
 |------|------|------|
 | 1 | 自前サーバー IMAP → Maildir → 全件一覧 | 実装済 |
 | 2 | tag_rules.tsv による仕分け ＋ 毎朝通知 | 実装済 |
+| 2.5 | POP3専用の第三者ISP（getmail） | 実装済 |
 | 3 | Gmail（アプリパスワード） | `.env` 追記のみで可 |
 | 4 | Outlook（OAuth2 が必要） | 未実装 |
 | 5 | Teams（Graph API, 自作） | 未実装 |
+
+段階2.5は、IMAPを提供しない（かつ管理者権限も無い）第三者ISPのための分岐である。
+mbsyncはIMAP専用でPOP3を一切話せないため、`.env`の`PROTOCOL`を`POP3`にすると
+`initialize.sh`が代わりに`getmail`用の設定（`_var/getmail/getmailrc-<account>`）を
+生成する。サーバー側には一切触らない。実例: Asahi Net（AWSの通知先として現役）。
 
 段階3は `.env` にアカウントを足して `initialize.sh` を再実行するだけでよい。  
 段階4は mbsync の `PassCmd` に OAuth2 アクセストークン取得スクリプトを噛ませる。  
@@ -215,18 +259,21 @@ imc/
 ├── LICENSE                       MIT
 ├── initialize.sh                 冪等な初期化（これ1本で使える状態になる）
 ├── .env.template                 ユーザーが .env へコピーして手で書く
-├── tag_rules.tsv                 仕分けルール（一次データ）
-├── imc_secret_get.sh             .env から1値を取り出す（mbsync PassCmd 用）
-├── imc_mail_sync.sh              mbsync → notmuch new
-├── imc_tag_apply.sh/.py          tag_rules.tsv を全件へ再適用（stdin=全件JSON）
+├── tag_rules.tsv                 仕分けルール（一次データ・public）
+├── tag_rules.local.tsv.template  同上・個人を特定しうる送信者ルール用
+│   └── tag_rules.local.tsv       （.gitignore対象。ユーザーが作る）
+├── imc_secret_get.sh             .env から1値を取り出す（mbsync/getmail 共用）
+├── imc_mail_sync.sh              mbsync(IMAP) / getmail(POP3) → notmuch new
+├── imc_tag_apply.sh/.py          ルールファイル(複数可)を全件へ再適用（stdin=全件JSON）
 ├── imc_mail_list.sh/.py          notmuch 検索 → tsv|json
 ├── imc_digest_format.py          一覧 → 通知本文
 ├── imc_digest_notify.sh          一覧 → 整形 → ntfy
 ├── imc_morning_run.sh            毎朝の一本道（タスクスケジューラが叩く）
 └── _var/                         二次情報。.gitignore 対象
-    ├── maildir/                  IMAPの複製
+    ├── maildir/                  IMAP/POP3両方の複製
     ├── notmuch/                  索引DB
-    ├── mbsyncrc                  .env から自動生成
+    ├── getmail/                  POP3アカウント用設定(getmailrc-<account>)・状態
+    ├── mbsyncrc                  .env から自動生成（IMAPアカウントのみ）
     ├── notmuch-config            .env から自動生成
     └── log/
 ```

@@ -7,7 +7,11 @@ design.md から切り出した、AI Agentが必ず守るべき操作手順。
 - `.env` は**読まない・書かない**。ユーザーが `.env.template` からコピーして手で書く。
   AI Agent が編集してよいのは `.env.template` のみ。  
 - `_var/` 配下はすべて生成物。手で編集しない。壊れたら `initialize.sh` で作り直す。
-- `tag_rules.tsv` は一次データ。AI Agent は**提案のみ**行い、適用前に必ず人間の確認を得る。
+- `tag_rules.tsv`・`tag_rules.local.tsv` は一次データ。AI Agent は**提案のみ**行い、適用前に必ず人間の確認を得る。
+- `tag_rules.tsv` はpublicリポジトリにcommitされる。送信者（`from`）ルールは
+  「どの銀行・税務署等を使っているか」を特定しうるので書かない。件名ベースの
+  ルールを優先する。どうしても送信者ルールが必要な場合のみ、gitignore対象の
+  `tag_rules.local.tsv`（`tag_rules.local.tsv.template`から作る）へ書く。
 - この文書と `design.md` はエージェントへの指示を含む一次文書。プロンプトで明示されない限り編集禁止。
 
 ## 通知本文の制約
@@ -23,11 +27,14 @@ design.md から切り出した、AI Agentが必ず守るべき操作手順。
 ## ルールを変更するときの手順（DJC）
 
 ```bash
+RULES=(tag_rules.tsv)
+[ -f tag_rules.local.tsv ] && RULES+=(tag_rules.local.tsv)
+
 imc_mail_list.sh '*' tsv > before.tsv
-# tag_rules.tsv を編集（AI Agentはここまで。以降は人間の確認後）
-imc_mail_list.sh '*' json | imc_tag_apply.sh tag_rules.tsv --dry-run > plan.tsv
+# tag_rules.tsv / tag_rules.local.tsv を編集（AI Agentはここまで。以降は人間の確認後）
+imc_mail_list.sh '*' json | imc_tag_apply.sh "${RULES[@]}" --dry-run > plan.tsv
 # plan.tsv が変更の全体。人間が見るのはこれだけでよい
-imc_mail_list.sh '*' json | imc_tag_apply.sh tag_rules.tsv --confirm > /dev/null
+imc_mail_list.sh '*' json | imc_tag_apply.sh "${RULES[@]}" --confirm > /dev/null
 imc_mail_list.sh '*' tsv > after.tsv
 diff before.tsv after.tsv
 ```
@@ -35,7 +42,10 @@ diff before.tsv after.tsv
 - ルールの良し悪しを**読んで判断しない**。適用して差分を見る。
 - `plan.tsv` が空なら、そのルール変更は何も変えていない。採用も却下も意味がない。
 - `imc_tag_apply.sh` には**必ず全件**（`'*'`）を渡す。
-  絞り込んだ一覧を渡すと、範囲外のメッセージに古いタグが残る。  
+  絞り込んだ一覧を渡すと、範囲外のメッセージに古いタグが残る。
+- `tag_rules.local.tsv` が存在するなら必ず一緒に渡す。片方だけ渡すと、
+  もう片方由来のタグが消えてしまう（`imc_tag_apply.sh`は渡されなかった
+  ファイルのタグを「もう要らない」と判断するため）。
 
 ## 日次実行
 
