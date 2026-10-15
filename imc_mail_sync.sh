@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Fetch mail from one account, or from all of them, into _var/maildir and
-# index the result with notmuch. Pull only: this never writes to the remote
-# server and never deletes local mail.
+# Fetch mail from one or more accounts, or from all of them, into
+# _var/maildir and index the result with notmuch. Pull only: this never writes
+# to the remote server and never deletes local mail.
 # IMAP accounts go through mbsync; POP3 accounts (mbsync cannot speak POP3
 # at all) go through getmail instead, reading _var/getmail/getmailrc-<account>.
 # <account> is a name from IMC_ACCOUNTS in .env, or the word all.
+# Holds _var/fetch.lock while it runs, so that it never overlaps another
+# fetch (imc_fetch.sh, imc_teams_fetch.sh) on the same Maildir and notmuch index.
 set -euo pipefail
 
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
@@ -19,8 +21,9 @@ stamp() { date '+%Y-%m-%dT%H:%M:%S%z'; }
 
 usage() {
   echo "$SCRIPT_NAME: $1" >&2
-  echo "usage: $SCRIPT_NAME <account|all> [--dry-run]" >&2
+  echo "usage: $SCRIPT_NAME <account|all> [<account> ...] [--dry-run]" >&2
   echo "example: $SCRIPT_NAME all" >&2
+  echo "example: $SCRIPT_NAME gmail" >&2
   echo "example: $SCRIPT_NAME selfhosted --dry-run" >&2
   awk 'NR==1{next} /^#/{sub(/^# ?/, ""); print; next} {exit}' "${BASH_SOURCE[0]}" >&2
   echo "Next: run $SCRIPT_DIR/initialize.sh first if $MBSYNCRC does not exist." >&2
@@ -36,11 +39,10 @@ for arg in "$@"; do
   esac
 done
 
-if [ "${#args[@]}" -ne 1 ]; then
-  usage "Wrong number of arguments"
+if [ "${#args[@]}" -lt 1 ]; then
+  usage "Too few arguments"
   exit 1
 fi
-target="${args[0]}"
 
 for path in "$ENV_FILE" "$MBSYNCRC" "$NOTMUCH_CONFIG_FILE"; do
   if [ ! -f "$path" ]; then
@@ -61,19 +63,22 @@ if [ "${#accounts[@]}" -eq 0 ]; then
   exit 1
 fi
 
-if [ "$target" = "all" ]; then
+if [ "${args[0]}" = "all" ] && [ "${#args[@]}" -eq 1 ]; then
   targets=("${accounts[@]}")
 else
-  found=false
-  for account in "${accounts[@]}"; do
-    [ "$account" = "$target" ] && found=true
+  targets=()
+  for target in "${args[@]}"; do
+    found=false
+    for account in "${accounts[@]}"; do
+      [ "$account" = "$target" ] && found=true
+    done
+    if ! "$found"; then
+      echo "$SCRIPT_NAME: Unknown account '$target'; IMC_ACCOUNTS has: ${accounts[*]}" >&2
+      echo "Next: use those names, or the word all on its own." >&2
+      exit 1
+    fi
+    targets+=("$target")
   done
-  if ! "$found"; then
-    echo "$SCRIPT_NAME: Unknown account '$target'; IMC_ACCOUNTS has: ${accounts[*]}" >&2
-    echo "Next: use one of those names, or the word all." >&2
-    exit 1
-  fi
-  targets=("$target")
 fi
 
 echo "Input:  accounts ${targets[*]} (IMAP via $MBSYNCRC, POP3 via $GETMAIL_DIR)" >&2
@@ -83,6 +88,14 @@ if "$dry_run"; then
   echo "$SCRIPT_NAME: Dry run completed; nothing was fetched or indexed." >&2
   echo "Next: rerun without --dry-run to fetch." >&2
   exit 0
+fi
+
+LOCK_FILE="$VAR_DIR/fetch.lock"
+exec 9>"$LOCK_FILE"
+if ! flock --wait 900 9; then
+  echo "$SCRIPT_NAME: another fetch has held $LOCK_FILE for 15 minutes; giving up." >&2
+  echo "Next: check for a stuck mbsync, getmail or notmuch process, then retry." >&2
+  exit 1
 fi
 
 total="${#targets[@]}"

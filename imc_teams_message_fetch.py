@@ -27,17 +27,14 @@ def read_pairs(lines):
     return pairs
 
 
-def main():
-    since_arg, output_format = sys.argv[1:3]
-    since = ml.parse_since(since_arg)
-    pairs = read_pairs(sys.stdin)
-    my_id = g.get("/me?$select=id")["id"]
-
+def resolve(pairs):
+    """Map each (team, channel) display name pair to ids, listing teams once and
+    each team's channels once. Returns (found, missing): found is a list of
+    (team_name, channel_name, team_id, channel_id), missing a list of strings."""
     teams = {t["displayName"]: t["id"] for t in g.get_all("/me/joinedTeams?$select=id,displayName")}
     channels = {}  # team name -> {channel name: channel id}
-    rows, missing = [], []
-    for i, (team_name, channel_name) in enumerate(pairs, 1):
-        g.stderr("%d/%d %s / %s" % (i, len(pairs), team_name, channel_name))
+    found, missing = [], []
+    for team_name, channel_name in pairs:
         if team_name not in teams:
             missing.append("team '%s'" % team_name)
             continue
@@ -48,11 +45,25 @@ def main():
         if channel_id is None:
             missing.append("channel '%s' in team '%s'" % (channel_name, team_name))
             continue
-        rows += ml.fetch(teams[team_name], channel_id, team_name, channel_name, since, my_id)
+        found.append((team_name, channel_name, teams[team_name], channel_id))
+    return found, missing
+
+
+def main():
+    since_arg, output_format = sys.argv[1:3]
+    since = ml.parse_since(since_arg)
+    pairs = read_pairs(sys.stdin)
+    my_id = g.get("/me?$select=id")["id"]
+
+    found, missing = resolve(pairs)
+    rows = []
+    for i, (team_name, channel_name, team_id, channel_id) in enumerate(found, 1):
+        g.stderr("%d/%d %s / %s" % (i, len(found), team_name, channel_name))
+        rows += ml.fetch(team_id, channel_id, team_name, channel_name, since, my_id)
 
     rows.sort(key=lambda r: r["posted_at"])
     ml.write(rows, output_format)
-    g.stderr("%d messages from %d channels since %s" % (len(rows), len(pairs) - len(missing), since.isoformat()))
+    g.stderr("%d messages from %d channels since %s" % (len(rows), len(found), since.isoformat()))
     if missing:
         g.stderr("Not found (skipped): %s" % ", ".join(missing))
         print("Next: check the exact names with imc_teams_channel_list.sh tsv and fix the list.", file=sys.stderr)
