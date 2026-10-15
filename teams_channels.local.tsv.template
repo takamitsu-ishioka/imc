@@ -1,0 +1,10 @@
+# Copy this file to teams_channels.local.tsv in the same directory. That file
+# is gitignored (see .gitignore) and never committed, because team and channel
+# names say where you work.
+#
+# One channel per line: team<TAB>channel, display names exactly as
+# imc_teams_channel_list.sh tsv prints them (columns 1 and 2).
+# Read by: imc_teams_message_fetch.sh <since> <tsv|json> < teams_channels.local.tsv
+#
+# team	channel
+#My Team	General

@@ -66,22 +66,15 @@ def wanted(message, since):
             and parse_time(message["createdDateTime"]) >= since)
 
 
-def main():
-    team_name, channel_name, since_arg, output_format = sys.argv[1:5]
-    try:
-        since = parse_time(since_arg)
-    except ValueError:
-        g.fail("since is not ISO 8601: %s" % since_arg, "use e.g. 2026-10-15 or 2026-10-15T09:00")
-    my_id = g.get("/me?$select=id")["id"]
-    team_id, channel_id = find_channel(team_name, channel_name)
-
+def fetch(team_id, channel_id, team_name, channel_name, since, my_id):
+    """Return the records posted to one channel since <since>, oldest first."""
     pages = {"n": 0}
 
     def stop(values):
         # Messages come newest-activity first; once a whole page was last touched
         # before since, nothing older can contain new posts or replies.
         pages["n"] += 1
-        g.stderr("page %d: %d messages" % (pages["n"], len(values)))
+        g.stderr("%s / %s page %d: %d messages" % (team_name, channel_name, pages["n"], len(values)))
         last = [parse_time(m.get("lastModifiedDateTime") or m["createdDateTime"]) for m in values]
         return pages["n"] >= MAX_PAGES or not values or max(last) < since
 
@@ -95,13 +88,32 @@ def main():
             if wanted(reply, since):
                 rows.append(record(reply, team_name, channel_name, my_id, root["id"]))
     rows.sort(key=lambda r: r["posted_at"])
+    return rows
 
+
+def write(rows, output_format):
     if output_format == "json":
         print(json.dumps(rows, ensure_ascii=False, indent=2))
     else:
         for r in rows:
             print("\t".join(str(r[k]).lower() if k == "addressed_to_me" else r[k].replace("\t", " ")
                             for k in FIELDS))
+
+
+def parse_since(since_arg):
+    try:
+        return parse_time(since_arg)
+    except ValueError:
+        g.fail("since is not ISO 8601: %s" % since_arg, "use e.g. 2026-10-15 or 2026-10-15T09:00")
+
+
+def main():
+    team_name, channel_name, since_arg, output_format = sys.argv[1:5]
+    since = parse_since(since_arg)
+    my_id = g.get("/me?$select=id")["id"]
+    team_id, channel_id = find_channel(team_name, channel_name)
+    rows = fetch(team_id, channel_id, team_name, channel_name, since, my_id)
+    write(rows, output_format)
     g.stderr("%s / %s: %d messages since %s" % (team_name, channel_name, len(rows), since.isoformat()))
     return 0
 

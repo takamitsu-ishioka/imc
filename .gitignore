@@ -15,6 +15,11 @@
 tag_rules.local.tsv
 !tag_rules.local.tsv.template
 
+# --- 勤務先を特定しうる情報: 読み取る Teams のチーム・チャネル名。
+#     imc_teams_message_fetch.sh に stdin で渡す ---
+teams_channels.local.tsv
+!teams_channels.local.tsv.template
+
 # --- 二次情報: IMAPの複製・notmuch索引・生成設定・ログ。すべて再生成可能 ---
 _var/
 
