@@ -1,13 +1,3 @@
-2026-10-14 07:45:15(JST) translate.sh: asking claude to translate Japanese -> English... (can take a few minutes for long documents)
-2026-10-14 07:45:17(JST) translate.sh: still running, elapsed 2s (not blocked)
-2026-10-14 07:45:18(JST) translate.sh: still running, elapsed 3s (not blocked)
-2026-10-14 07:45:19(JST) translate.sh: still running, elapsed 4s (not blocked)
-2026-10-14 07:45:20(JST) translate.sh: still running, elapsed 5s (not blocked)
-2026-10-14 07:45:21(JST) translate.sh: still running, elapsed 6s (not blocked)
-2026-10-14 07:45:22(JST) translate.sh: still running, elapsed 7s (not blocked)
-2026-10-14 07:45:23(JST) translate.sh: still running, elapsed 8s (not blocked)
-2026-10-14 07:45:24(JST) translate.sh: still running, elapsed 9s (not blocked)
-2026-10-14 07:45:24(JST) translate.sh: done (exit 0). Next: review the translated output.
 # imc — Integrated Message Client
 
 A personal message aggregation platform that gathers messages addressed to me from various places (self-hosted mail, Gmail, Outlook, Teams, etc.) into one place every morning, and sends push notifications to my smartphone only for the ones that need action.

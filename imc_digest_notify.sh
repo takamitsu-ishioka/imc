@@ -71,18 +71,12 @@ if [[ ! "$IMC_NTFY_SERVER" =~ ^https://[^[:space:]/]+/?$ ]]; then
   exit 1
 fi
 
-# On a public ntfy server the topic name is the only thing keeping strangers
-# out, so a readable prefix is fine but the name as a whole must stay
-# unguessable. Require at least 32 hexadecimal characters of randomness
-# somewhere in it.
+# The topic goes into the URL path, so allow only URL-safe characters.
+# How unguessable it is, is left to the owner (2026-10-15: the hex-randomness
+# check was removed at the owner's request).
 if [[ ! "$IMC_NTFY_TOPIC" =~ ^[A-Za-z0-9_-]+$ ]]; then
   echo "$SCRIPT_NAME: IMC_NTFY_TOPIC may contain only letters, digits, underscores and hyphens." >&2
   echo "Next: edit $ENV_FILE and retry." >&2
-  exit 1
-fi
-if [[ ! "$IMC_NTFY_TOPIC" =~ [0-9a-f]{32} ]]; then
-  echo "$SCRIPT_NAME: IMC_NTFY_TOPIC has no random part, so anyone could guess it and read your mail subjects." >&2
-  echo "Next: run 'echo \"imc-digest-\$(openssl rand -hex 20)\"', put the result in $ENV_FILE, and subscribe to it on the phone." >&2
   exit 1
 fi
 

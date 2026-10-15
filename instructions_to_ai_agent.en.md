@@ -1,18 +1,3 @@
-2026-10-14 14:09:26(JST) translate.sh: asking claude to translate Japanese -> English... (can take a few minutes for long documents)
-2026-10-14 14:09:27(JST) translate.sh: still running, elapsed 1s (not blocked)
-2026-10-14 14:09:28(JST) translate.sh: still running, elapsed 2s (not blocked)
-2026-10-14 14:09:29(JST) translate.sh: still running, elapsed 3s (not blocked)
-2026-10-14 14:09:30(JST) translate.sh: still running, elapsed 4s (not blocked)
-2026-10-14 14:09:31(JST) translate.sh: still running, elapsed 5s (not blocked)
-2026-10-14 14:09:32(JST) translate.sh: still running, elapsed 6s (not blocked)
-2026-10-14 14:09:33(JST) translate.sh: still running, elapsed 7s (not blocked)
-2026-10-14 14:09:34(JST) translate.sh: still running, elapsed 8s (not blocked)
-2026-10-14 14:09:35(JST) translate.sh: still running, elapsed 9s (not blocked)
-2026-10-14 14:09:36(JST) translate.sh: still running, elapsed 10s (not blocked)
-2026-10-14 14:09:37(JST) translate.sh: still running, elapsed 11s (not blocked)
-2026-10-14 14:09:38(JST) translate.sh: still running, elapsed 12s (not blocked)
-2026-10-14 14:09:39(JST) translate.sh: still running, elapsed 13s (not blocked)
-2026-10-14 14:09:39(JST) translate.sh: done (exit 0). Next: review the translated output.
 # Instructions for the AI Agent (imc system)
 
 Operating procedures that the AI Agent must follow, extracted from design.md.  
@@ -34,10 +19,8 @@ Operating procedures that the AI Agent must follow, extracted from design.md.
 The only things allowed in the notification body are the **sender and subject**.  
 Never include the body text, attachments, URLs, or authentication codes. This is because the notification goes through the public ntfy server.  
 
-`IMC_NTFY_TOPIC` must not be a guessable name.  
-On a public server, the topic name is effectively a password.  
-`imc_digest_notify.sh` rejects any topic that lacks a random part of 32 or more hexadecimal characters.  
-Do not loosen this check.  
+On a public server, `IMC_NTFY_TOPIC` (the topic name) is effectively a password.  
+Keeping the key secure is the user's responsibility.  
 
 ## Procedure for changing rules (DJC)
 
