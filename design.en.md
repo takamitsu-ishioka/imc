@@ -106,7 +106,7 @@ flowchart LR
   subgraph Fetch["取得"]
     MB[mbsync<br/>既製品・IMAP専用]
     GM[getmail<br/>既製品・POP3専用]
-    TG[teams取得<br/>自作・将来]
+    TG[imc_teams_fetch.sh<br/>自作]
   end
 
   MD[("_var/maildir/<br/>生データ全件")]
@@ -128,10 +128,10 @@ flowchart LR
   S5 --> GM
   S2 --> MB
   S3 -.未実装.-> MB
-  S4 -.未実装.-> TG
+  S4 --> TG
   MB --> MD
   GM --> MD
-  TG -.-> MD
+  TG --> MD
   MD --> NM --> DB
   DB --> TA --> DB
   DB --> LS
@@ -235,7 +235,7 @@ imc_mail_list.sh '*' json | imc_tag_apply.sh tag_rules.tsv tag_rules.local.tsv -
 | 2.5 | POP3-only third-party ISP (getmail) | Implemented |
 | 3 | Gmail (app password) | Possible by only appending to `.env` |
 | 4 | Outlook (OAuth2 required) | Not implemented |
-| 5 | Teams (Graph API, self-built) | Not implemented |
+| 5 | Teams (Graph API, self-built) | Implemented |
 
 Stage 2.5 is a branch for third-party ISPs that don't offer IMAP (and where we have no administrator privileges).
 Because mbsync is IMAP-only and cannot speak POP3 at all, setting `PROTOCOL` in `.env` to `POP3` makes
