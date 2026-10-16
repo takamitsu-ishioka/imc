@@ -15,7 +15,7 @@ MAILDIR="$VAR_DIR/maildir"
 GETMAIL_DIR="$VAR_DIR/getmail"
 MBSYNCRC="$VAR_DIR/mbsyncrc"
 NOTMUCH_CONFIG_FILE="$VAR_DIR/notmuch-config"
-PACKAGES="isync getmail6 notmuch neomutt mblaze"
+PACKAGES="isync getmail6 notmuch neomutt"
 
 usage() {
   echo "$SCRIPT_NAME: $1" >&2

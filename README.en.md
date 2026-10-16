@@ -10,7 +10,7 @@ It was prompted by a recurrence-prevention concern: I missed a US bank's login n
 cp .env.template .env && chmod 600 .env
 vi .env                    # Write the IMAP info and a randomized ntfy topic
 vi tag_rules.tsv           # Write rules for the senders and subjects to be judged as actionable
-./initialize.sh            # Install isync/notmuch/neomutt/mblaze and generate the configuration
+./initialize.sh            # Install isync/notmuch/neomutt and generate the configuration
 ./imc_mail_sync.sh all     # Initial sync
 ./imc_mail_list.sh '*' tsv | less
 ./imc_digest_notify.sh 'tag:actionable and not tag:done' '' --dry-run

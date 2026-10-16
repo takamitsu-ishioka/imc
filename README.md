@@ -12,7 +12,7 @@
 cp .env.template .env && chmod 600 .env
 vi .env                    # IMAP情報と、乱数つきのntfyトピックを書く
 vi tag_rules.tsv           # 要対応と判定する送信者・件名のルールを書く
-./initialize.sh            # isync/notmuch/neomutt/mblazeの導入、設定の生成
+./initialize.sh            # isync/notmuch/neomuttの導入、設定の生成
 ./imc_mail_sync.sh all     # 初回同期
 ./imc_mail_list.sh '*' tsv | less
 ./imc_digest_notify.sh 'tag:actionable and not tag:done' '' --dry-run
