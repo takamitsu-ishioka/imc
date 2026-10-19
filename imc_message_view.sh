@@ -15,6 +15,10 @@
 # f appends a from rule to tag_rules.local.tsv (gitignored) and re-applies the
 # rules to every message, so all mail from that sender, past and future, gets
 # tag:nonessential. Remove the line from that file to take it back later.
+# Mouse: a drag selects text inside the pane where it started (the terminal's
+# own selection runs across the panes) and copies it to the Windows clipboard
+# with clip.exe, folded lines joined back; a click focuses a pane or row, and
+# the wheel scrolls the pane under the pointer.
 # Viewing a message marks it read.
 # <query> is a notmuch query, or NEW for every unread message that is neither
 # suspicious (see imc_suspicious_tag.sh) nor nonessential.

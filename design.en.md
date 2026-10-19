@@ -325,3 +325,7 @@ and it returns to its original state. The leading `_` indicates "not primary inf
   does not leak outside the repository.  
 - **Passwords are placed only in `.env`**. They are not written in the mbsync configuration file; they are read
   each time via `PassCmd`. `.env` must be mode 600. Scripts check the mode and refuse to run otherwise.
+- **Mouse selection in `imc_message_view.sh` copies to the clipboard with `clip.exe` (Windows-specific)** (2026-10-19).
+  OSC52, the portable way between terminals, is not supported by the legacy console (conhost) in use.
+  Working in the current terminal was preferred over moving to Windows Terminal.  
+  `clip.exe` is given UTF-16LE without a BOM and CRLF line ends (a BOM would be pasted as a character).  

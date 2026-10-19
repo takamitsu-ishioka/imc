@@ -19,6 +19,11 @@ since a sender list says which services you use) and re-applies both rules
 files to every message, so past and future mail from that sender is tagged
 nonessential. NEW leaves nonessential (and suspicious) mail out; to undo a
 registration later, delete its line from tag_rules.local.tsv.
+Mouse: dragging selects text inside the one pane where the drag started (the
+terminal's own selection would run across the panes), and releasing copies
+it to the Windows clipboard through clip.exe. Lines folded to fit the pane
+are joined back, so a long URL is copied whole. A click focuses the pane (and
+the row, in the list); the wheel scrolls the pane under the pointer.
 """
 import curses
 import datetime
@@ -39,13 +44,19 @@ RULES = os.path.join(SCRIPT_DIR, "tag_rules.tsv")
 LOCAL_RULES = os.path.join(SCRIPT_DIR, "tag_rules.local.tsv")
 NONESSENTIAL = "nonessential"
 KEYS = ("p:right pane on/off  Tab/←→:focus  ↑↓ PgUp/PgDn Home/End:move in focus  Space:check (check,move,check = range)  "
-        "a/A:all/none  v:view  d:delete  f:sender nonessential  u:undo  r:reload  q:quit")
+        "a/A:all/none  v:view  d:delete  f:sender nonessential  u:undo  r:reload  q:quit  "
+        "mouse drag:copy in one pane  wheel:scroll")
 PANES = ("list", "header", "body")   # Tab cycles in this order
 # Ctrl+Home / Ctrl+End have no curses constant; ncurses names them kHOM5 / kEND5.
 TOP_KEYS = (curses.KEY_HOME, "g")
 END_KEYS = (curses.KEY_END, "G")
 TOP_NAMES = (b"kHOM5",)
 END_NAMES = (b"kEND5",)
+# ncurses turns on press/release reports only; 1002 adds motion while a button
+# is held, so the selection can be drawn during the drag.
+DRAG_ON, DRAG_OFF = "\033[?1002h", "\033[?1002l"
+WHEEL_UP = curses.BUTTON4_PRESSED
+WHEEL_DOWN = curses.BUTTON5_PRESSED
 
 
 def key_name(key):
@@ -76,8 +87,9 @@ def fit(text, cols):
 
 
 def wrap(text, cols):
-    """Break text into lines of at most cols cells (long lines are folded, not cut)."""
-    lines = []
+    """Break text into lines of at most cols cells (long lines are folded, not cut).
+    Returns (lines, folded): folded[i] is True when line i continues on line i+1."""
+    lines, folded = [], []
     for raw in text.splitlines() or [""]:
         line, used = "", 0
         for c in raw.replace("\t", "    "):
@@ -86,11 +98,32 @@ def wrap(text, cols):
             w = char_width(c)
             if used + w > cols:
                 lines.append(line)
+                folded.append(True)
                 line, used = "", 0
             line += c
             used += w
         lines.append(line)
-    return lines
+        folded.append(False)
+    return lines, folded
+
+
+def char_at(line, cell):
+    """Index of the character of line drawn at terminal cell offset cell
+    (len(line) when the cell is past its end)."""
+    used = 0
+    for i, c in enumerate(line):
+        used += char_width(c)
+        if used > cell:
+            return i
+    return len(line)
+
+
+def copy_to_clipboard(text):
+    """Put text on the Windows clipboard. clip.exe reads UTF-16LE (no BOM: a
+    BOM would be pasted as a character) and expects CRLF line ends."""
+    data = text.replace("\n", "\r\n").encode("utf-16-le")
+    subprocess.run(["clip.exe"], input=data, check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def load(query):
@@ -217,7 +250,9 @@ class Viewer:
         self.anchor = None     # index of the last check-on, while only moves follow it
         self.viewed = None     # Message-ID shown on the right
         self.header_lines, self.body_lines = [], []
+        self.header_folded, self.body_folded = [], []
         self.header_top = self.body_top = 0
+        self.sel = None        # {"pane", "a": (line, char), "b": (line, char)}; a is where the drag began
         self.undo = None       # ("delete", Message-IDs) or ("sender", rule lines added)
         self.status = "%d messages" % len(self.items)
         self.focus = "list"    # the pane that ↑↓ PgUp/PgDn Home/End move
@@ -250,8 +285,10 @@ class Viewer:
         header, body = read_message(mid)
         _, cols = self.screen.getmaxyx()
         width = cols - self.left_width() - 1
-        self.header_lines, self.body_lines = wrap(header, width), wrap(body, width)
+        self.header_lines, self.header_folded = wrap(header, width)
+        self.body_lines, self.body_folded = wrap(body, width)
         self.header_top = self.body_top = 0
+        self.sel = None
         self.viewed = mid
         notmuch("tag", "-unread", "--", "id:" + mid)
         self.items[index]["read"] = True
@@ -431,14 +468,10 @@ class Viewer:
             if i >= len(self.items):
                 break
             it = self.items[i]
-            box = "[x]" if it["mid"] in self.checked else "[ ]"
-            mark = "*" if it["mid"] == self.viewed else (" " if it.get("read") else "N")
-            line = "%s%s %s %s %s  %s" % (box, mark, it["date"], fit(it["account"], 8),
-                                          fit(it["from"], 12), it["subject"])
             attr = curses.A_BOLD if it["mid"] in self.checked else curses.A_NORMAL
             if i == self.cur:
                 attr |= curses.A_REVERSE
-            self.screen.addstr(1 + row, 0, fit(line, lw), attr)
+            self.draw_line(1 + row, 0, self.list_line(i), lw, attr, "list", i)
 
         if not self.right_open:
             bar = "[%s]  %s" % (self.status, KEYS)
@@ -455,25 +488,169 @@ class Viewer:
         for row in range(head_rows - 1):
             i = self.header_top + row
             text = self.header_lines[i] if i < len(self.header_lines) else ""
-            self.screen.addstr(1 + row, lw + 1, fit(text, rw))
+            self.draw_line(1 + row, lw + 1, text, rw, curses.A_NORMAL, "header", i)
         # right bottom: body
         self.screen.addstr(head_rows, lw + 1, fit(" body %s" % self.position("body"), rw), self.title_attr("body"))
         for row in range(body_rows - head_rows):
             i = self.body_top + row
             text = self.body_lines[i] if i < len(self.body_lines) else ""
-            self.screen.addstr(head_rows + 1 + row, lw + 1, fit(text, rw))
+            self.draw_line(head_rows + 1 + row, lw + 1, text, rw, curses.A_NORMAL, "body", i)
 
         # bottom: key bindings and status
         bar = "[%s]  %s" % (self.status, KEYS)
         self.screen.addstr(rows - 1, 0, fit(bar, cols - 1), curses.A_REVERSE)
         self.screen.refresh()
 
+    # --- mouse selection -----------------------------------------------
+    def list_line(self, i):
+        """The text of list row i, cut to the pane width (what the list pane shows)."""
+        it = self.items[i]
+        box = "[x]" if it["mid"] in self.checked else "[ ]"
+        mark = "*" if it["mid"] == self.viewed else (" " if it.get("read") else "N")
+        line = "%s%s %s %s %s  %s" % (box, mark, it["date"], fit(it["account"], 8),
+                                      fit(it["from"], 12), it["subject"])
+        return fit(line, self.left_width()).rstrip()
+
+    def pane_lines(self, pane):
+        """(lines, folded) of a pane, in the same characters as drawn."""
+        if pane == "header":
+            return self.header_lines, self.header_folded
+        if pane == "body":
+            return self.body_lines, self.body_folded
+        lines = [self.list_line(i) for i in range(len(self.items))]
+        return lines, [False] * len(lines)
+
+    def pane_box(self, pane):
+        """Screen cells (first row, last row, first column, last column) of a pane's text."""
+        rows, cols = self.screen.getmaxyx()
+        lw = self.left_width()
+        _, head_text_rows, _ = self.pane_rows()
+        if pane == "list":
+            return 1, rows - 2, 0, lw - 1
+        if pane == "header":
+            return 1, head_text_rows, lw + 1, cols - 1
+        return head_text_rows + 2, rows - 2, lw + 1, cols - 1
+
+    def spot_in(self, pane, y, x):
+        """(line, cell) of pane under screen cell (y, x), clamped into the pane."""
+        y0, y1, x0, x1 = self.pane_box(pane)
+        y, x = min(max(y, y0), y1), min(max(x, x0), x1)
+        top = {"list": self.top, "header": self.header_top, "body": self.body_top}[pane]
+        return top + y - y0, x - x0
+
+    def hit(self, y, x):
+        """The pane whose text area holds screen cell (y, x), or None."""
+        for pane in (PANES if self.right_open else ("list",)):
+            y0, y1, x0, x1 = self.pane_box(pane)
+            if y0 <= y <= y1 and x0 <= x <= x1:
+                return pane
+        return None
+
+    def selection_span(self, pane, i, text):
+        """The [start, end) character range of line i that is selected, or None."""
+        if not self.sel or self.sel["pane"] != pane:
+            return None
+        a, b = sorted((self.sel["a"], self.sel["b"]))
+        if i < a[0] or i > b[0]:
+            return None
+        start = a[1] if i == a[0] else 0
+        end = b[1] + 1 if i == b[0] else len(text)
+        return (start, min(end, len(text))) if start < end else None
+
+    def draw_line(self, y, x, text, width, attr, pane, i):
+        """Draw one pane line, the selected part of it reversed."""
+        text = fit(text, width)
+        span = self.selection_span(pane, i, text.rstrip())
+        if not span:
+            self.screen.addstr(y, x, text, attr)
+            return
+        start, end = span
+        for part, part_attr in ((text[:start], attr), (text[start:end], attr ^ curses.A_REVERSE),
+                                (text[end:], attr)):
+            if part:
+                self.screen.addstr(y, x, part, part_attr)
+                x += sum(char_width(c) for c in part)
+
+    def selected_text(self):
+        lines, folded = self.pane_lines(self.sel["pane"])
+        a, b = sorted((self.sel["a"], self.sel["b"]))
+        out = []
+        for i in range(a[0], min(b[0], len(lines) - 1) + 1):
+            text = lines[i].rstrip() if self.sel["pane"] == "list" else lines[i]
+            start = a[1] if i == a[0] else 0
+            end = b[1] + 1 if i == b[0] else len(text)
+            out.append(text[start:end])
+            if i < b[0]:
+                out.append("" if folded[i] else "\n")
+        return "".join(out)
+
+    def mouse(self):
+        try:
+            _, x, y, _, state = curses.getmouse()
+        except curses.error:
+            return
+        pane = self.hit(y, x)
+        if state & (WHEEL_UP | WHEEL_DOWN):
+            if pane:
+                focus = self.focus
+                self.focus = pane
+                self.move(-3 if state & WHEEL_UP else 3)
+                self.focus = focus
+            return
+        if state & curses.BUTTON1_PRESSED:
+            self.sel = None
+            if pane:
+                line, cell = self.spot_in(pane, y, x)
+                lines, _ = self.pane_lines(pane)
+                if line < len(lines):
+                    start = (line, char_at(lines[line], cell))
+                    self.sel = {"pane": pane, "a": start, "b": start, "drag": True}
+            return
+        if not self.sel or not self.sel.get("drag"):
+            return
+        # Dragging out of the pane does not leave it: the point is clamped into it.
+        pane = self.sel["pane"]
+        line, cell = self.spot_in(pane, y, x)
+        lines, _ = self.pane_lines(pane)
+        line = min(line, len(lines) - 1)
+        self.sel["b"] = (line, char_at(lines[line], cell))
+        if state & curses.BUTTON1_RELEASED:
+            self.sel["drag"] = False
+            if self.sel["a"] == self.sel["b"]:
+                self.click(pane, line)
+                return
+            text = self.selected_text()
+            try:
+                copy_to_clipboard(text)
+                self.status = "copied %d characters" % len(text)
+            except (OSError, subprocess.CalledProcessError) as error:
+                self.status = "clip.exe failed: %s" % error
+
+    def click(self, pane, line):
+        """A click without a drag: focus the pane, and in the list the row."""
+        self.sel = None
+        if pane != "list" and not self.right_open:
+            return
+        self.focus = pane
+        if pane == "list" and line < len(self.items):
+            self.cur = line
+            self.anchor = None
+
     # --- loop ----------------------------------------------------------
     def run(self):
         curses.curs_set(0)
+        curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
+        curses.mouseinterval(0)   # report press and release, not clicks
+        sys.stdout.write(DRAG_ON)
+        sys.stdout.flush()
         while True:
             self.draw()
             key = self.screen.get_wch()
+            if key == curses.KEY_MOUSE:
+                self.mouse()
+                continue
+            if self.sel and not self.sel.get("drag"):
+                self.sel = None   # any key clears a finished selection
             if key in (curses.KEY_DOWN, "j"):
                 self.move(1)
             elif key in (curses.KEY_UP, "k"):
@@ -528,14 +705,20 @@ class Viewer:
         header, body = read_message(mid)
         _, cols = self.screen.getmaxyx()
         width = cols - self.left_width() - 1
-        self.header_lines, self.body_lines = wrap(header, width), wrap(body, width)
+        self.header_lines, self.header_folded = wrap(header, width)
+        self.body_lines, self.body_folded = wrap(body, width)
+        self.sel = None
 
 
 def main():
     locale.setlocale(locale.LC_ALL, "")
     os.environ.setdefault("ESCDELAY", "25")
     query = sys.argv[1]
-    curses.wrapper(lambda screen: Viewer(screen, query).run())
+    try:
+        curses.wrapper(lambda screen: Viewer(screen, query).run())
+    finally:
+        sys.stdout.write(DRAG_OFF)
+        sys.stdout.flush()
     print("imc_message_view.sh: done. Next: run it again any time; deleted messages "
           "can be restored with notmuch tag -deleted id:<Message-ID>.", file=sys.stderr)
 
