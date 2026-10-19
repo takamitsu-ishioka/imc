@@ -8,11 +8,16 @@
 # v or Right opens them again).
 # Space checks a message; check, move, check checks the whole range;
 # v views the focused message, d deletes the
-# checked messages (or the focused one), u undoes the last delete.
+# checked messages (or the focused one), f marks their senders nonessential,
+# u undoes the last delete or f.
 # "Delete" tags the message deleted in notmuch; the file stays in _var/maildir
 # (imc never deletes local mail), and tag:deleted is hidden from searches.
+# f appends a from rule to tag_rules.local.tsv (gitignored) and re-applies the
+# rules to every message, so all mail from that sender, past and future, gets
+# tag:nonessential. Remove the line from that file to take it back later.
 # Viewing a message marks it read.
-# <query> is a notmuch query, or NEW for every unread message (tag:unread).
+# <query> is a notmuch query, or NEW for every unread message that is neither
+# suspicious (see imc_suspicious_tag.sh) nor nonessential.
 set -euo pipefail
 
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
@@ -23,6 +28,7 @@ usage() {
   echo "usage: $SCRIPT_NAME <NEW|query>" >&2
   echo "example: $SCRIPT_NAME NEW" >&2
   echo "example: $SCRIPT_NAME 'tag:unread and not folder:/teams-.*/'" >&2
+  echo "example: $SCRIPT_NAME 'tag:suspicious or tag:nonessential'" >&2
   awk 'NR==1{next} /^#/{sub(/^# ?/, ""); print; next} {exit}' "${BASH_SOURCE[0]}" >&2
 }
 
@@ -40,6 +46,6 @@ if [ ! -t 0 ] || [ ! -t 1 ]; then
   exit 2
 fi
 query="$1"
-[ "$query" = "NEW" ] && query="tag:unread"
+[ "$query" = "NEW" ] && query="tag:unread and not tag:suspicious and not tag:nonessential"
 
 exec python3 "$SCRIPT_DIR/imc_message_view.py" "$query"

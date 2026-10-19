@@ -1,6 +1,7 @@
 """Full-screen viewer for unread messages (mail and Teams). Called only through
 imc_message_view.sh, which validates the arguments.
-Arguments: <query> (a notmuch query; the wrapper turns NEW into tag:unread).
+Arguments: <query> (a notmuch query; the wrapper turns NEW into
+"tag:unread and not tag:suspicious and not tag:nonessential").
 
 Layout:
   left         the messages, with checkboxes
@@ -12,13 +13,21 @@ The list is read once at start (r reloads). Messages are identified by
 Message-ID, not by file, because changing tags renames Maildir files.
 "Delete" tags the message deleted (and read): the file stays, because imc
 never deletes local mail, and notmuch-config hides tag:deleted from searches.
+f registers the sender of the checked messages (or the focused one) as
+nonessential: it appends a from rule to tag_rules.local.tsv (gitignored,
+since a sender list says which services you use) and re-applies both rules
+files to every message, so past and future mail from that sender is tagged
+nonessential. NEW leaves nonessential (and suspicious) mail out; to undo a
+registration later, delete its line from tag_rules.local.tsv.
 """
 import curses
+import datetime
 import email
 import email.policy
 import json
 import locale
 import os
+import re
 import subprocess
 import sys
 import unicodedata
@@ -26,8 +35,11 @@ import unicodedata
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 NOTMUCH_CONFIG = os.path.join(SCRIPT_DIR, "_var", "notmuch-config")
 MAIL_ROOT = os.path.join(SCRIPT_DIR, "_var", "maildir")
+RULES = os.path.join(SCRIPT_DIR, "tag_rules.tsv")
+LOCAL_RULES = os.path.join(SCRIPT_DIR, "tag_rules.local.tsv")
+NONESSENTIAL = "nonessential"
 KEYS = ("p:right pane on/off  Tab/←→:focus  ↑↓ PgUp/PgDn Home/End:move in focus  Space:check (check,move,check = range)  "
-        "a/A:all/none  v:view  d:delete  u:undo  r:reload  q:quit")
+        "a/A:all/none  v:view  d:delete  f:sender nonessential  u:undo  r:reload  q:quit")
 PANES = ("list", "header", "body")   # Tab cycles in this order
 # Ctrl+Home / Ctrl+End have no curses constant; ncurses names them kHOM5 / kEND5.
 TOP_KEYS = (curses.KEY_HOME, "g")
@@ -102,6 +114,7 @@ def load(query):
             "date": r["date_iso"][5:16].replace("T", " "),
             "account": r["account"],
             "from": " ".join((r["from_name"] or r["from_addr"] or "").split()),
+            "addr": (r["from_addr"] or "").strip().lower(),
             "subject": subject,
         })
     return items
@@ -159,6 +172,41 @@ def read_message(mid):
     return header_text, body
 
 
+def sender_rule(addr):
+    """The tag_rules from-regex for one address. imc_tag_apply matches from
+    rules against "<name> <address>", so anchor on the address at the end."""
+    return "(^| )%s$" % re.escape(addr)
+
+
+def retag():
+    """Re-apply both rules files to every message, as imc_morning_run.sh does.
+    Returns "" on success, else the tail of the error output."""
+    listing = subprocess.run([os.path.join(SCRIPT_DIR, "imc_mail_list.sh"), "*", "json"],
+                             capture_output=True, text=True)
+    if listing.returncode != 0:
+        lines = listing.stderr.strip().splitlines()
+        return lines[-1] if lines else "imc_mail_list.sh failed"
+    rules = [RULES] + ([LOCAL_RULES] if os.path.exists(LOCAL_RULES) else [])
+    applied = subprocess.run([os.path.join(SCRIPT_DIR, "imc_tag_apply.sh"), *rules],
+                             input=listing.stdout, capture_output=True, text=True)
+    if applied.returncode != 0:
+        lines = applied.stderr.strip().splitlines()
+        return lines[-1] if lines else "imc_tag_apply.sh failed"
+    return ""
+
+
+def local_rule_lines():
+    if not os.path.exists(LOCAL_RULES):
+        return []
+    with open(LOCAL_RULES, encoding="utf-8") as f:
+        return f.read().splitlines()
+
+
+def write_local_rules(lines):
+    with open(LOCAL_RULES, "w", encoding="utf-8") as f:
+        f.write("".join(line + "\n" for line in lines))
+
+
 class Viewer:
     def __init__(self, screen, query):
         self.screen, self.query = screen, query
@@ -170,7 +218,7 @@ class Viewer:
         self.viewed = None     # Message-ID shown on the right
         self.header_lines, self.body_lines = [], []
         self.header_top = self.body_top = 0
-        self.undo = []         # Message-IDs of the last delete
+        self.undo = None       # ("delete", Message-IDs) or ("sender", rule lines added)
         self.status = "%d messages" % len(self.items)
         self.focus = "list"    # the pane that ↑↓ PgUp/PgDn Home/End move
         self.right_open = True # p closes the right panes so the list takes the whole width
@@ -219,7 +267,7 @@ class Viewer:
         for mid in mids:
             query += (["or"] if query else []) + ["id:" + mid]
         notmuch("tag", "+deleted", "-unread", "--", *query)
-        self.undo = mids
+        self.undo = ("delete", mids)
         gone = set(mids)
         self.items = [it for it in self.items if it["mid"] not in gone]
         self.checked -= gone
@@ -229,17 +277,67 @@ class Viewer:
         self.cur = min(self.cur, max(len(self.items) - 1, 0))
         self.status = "deleted %d (u to undo)" % len(mids)
 
-    def undo_delete(self):
+    def undo_last(self):
         if not self.undo:
             self.status = "nothing to undo"
             return
-        query = []
-        for mid in self.undo:
-            query += (["or"] if query else []) + ["id:" + mid]
-        notmuch("tag", "-deleted", "+unread", "--", *query)
-        self.status = "restored %d" % len(self.undo)
-        self.undo = []
+        kind, values = self.undo
+        if kind == "delete":
+            query = []
+            for mid in values:
+                query += (["or"] if query else []) + ["id:" + mid]
+            notmuch("tag", "-deleted", "+unread", "--", *query)
+            self.status = "restored %d" % len(values)
+        else:
+            added = set(values)
+            write_local_rules([line for line in local_rule_lines() if line not in added])
+            error = retag()
+            self.status = ("unregistered %d sender(s)" % len(values)) if not error else "retag failed: " + error
+        self.undo = None
         self.reload(keep_status=True)
+
+    def ask(self, question):
+        """Show question in the status bar and wait for y (True) or anything else (False)."""
+        self.status = question + " [y/N]"
+        self.draw()
+        return self.screen.get_wch() in ("y", "Y")
+
+    def register_senders(self):
+        """Register the senders of the checked messages (or the focused one) as nonessential."""
+        targets = [it for it in self.items if it["mid"] in self.checked]
+        if not targets and self.items:
+            targets = [self.items[self.cur]]
+        addrs = sorted({it["addr"] for it in targets if it["addr"]})
+        if not addrs:
+            self.status = "no sender address to register"
+            return
+        lines = local_rule_lines()
+        known = {line.split("\t")[2] for line in lines
+                 if line.count("\t") >= 2 and line.split("\t")[0] == NONESSENTIAL}
+        new = [a for a in addrs if sender_rule(a) not in known]
+        if not new:
+            self.status = "already nonessential: %s" % ", ".join(addrs)
+            return
+        shown = new[0] if len(new) == 1 else "%s and %d more" % (new[0], len(new) - 1)
+        if not self.ask("mark %s nonessential (all mail, past and future)?" % shown):
+            self.status = "not registered"
+            return
+        if not lines and os.path.exists(LOCAL_RULES + ".template"):
+            with open(LOCAL_RULES + ".template", encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        today = datetime.date.today().isoformat()
+        added = ["%s\tfrom\t%s\timc_message_view.sh f %s" % (NONESSENTIAL, sender_rule(a), today)
+                 for a in new]
+        write_local_rules(lines + added)
+        self.status = "tagging..."
+        self.draw()
+        error = retag()
+        if error:
+            self.status = "rule added but retag failed: " + error
+            return
+        self.undo = ("sender", added)
+        self.reload(keep_status=True)
+        self.status = "nonessential: %s (u to undo)" % shown
 
     def reload(self, keep_status=False):
         focus = self.items[self.cur]["mid"] if self.items else None
@@ -412,8 +510,10 @@ class Viewer:
                 self.view()
             elif key == "d":
                 self.delete()
+            elif key == "f":
+                self.register_senders()
             elif key == "u":
-                self.undo_delete()
+                self.undo_last()
             elif key == "r":
                 self.reload()
             elif key == curses.KEY_RESIZE:

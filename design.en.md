@@ -157,6 +157,7 @@ sequenceDiagram
   participant WSL as wsl.exe
   participant SY as imc_mail_sync.sh
   participant TA as imc_tag_apply.sh
+  participant ST as imc_suspicious_tag.sh
   participant DG as imc_digest_notify.sh
   participant N as ntfy
   participant P as スマートフォン
@@ -165,7 +166,8 @@ sequenceDiagram
   WSL->>SY: 全アカウント同期
   SY->>SY: mbsync → notmuch new
   WSL->>TA: 全件JSON | tag_rules.tsv を再適用
-  WSL->>DG: query + 異常メモ
+  WSL->>ST: 全件JSON | なりすまし判定（tag:suspicious）
+  WSL->>DG: (query) and not tag:suspicious + 異常メモ
   DG->>N: 差出人＋件名（0件でも送る）
   N->>P: 通知
   Note over P: 届かない日 = 仕組みの故障
@@ -226,6 +228,38 @@ imc_mail_list.sh '*' json | imc_tag_apply.sh tag_rules.tsv tag_rules.local.tsv -
 
 `imc_morning_run.sh` automatically adds `tag_rules.local.tsv` only if it exists.
 
+### Forgery Is Judged from the Header, Not from a Rules File (2026-10-19)
+
+The self-hosted server adds no `Authentication-Results`, so there is no server verdict to rely on.
+`imc_suspicious_tag.sh` reads the raw header and tags the message `tag:suspicious` if either of the following fires.
+The tag is owned by that script and is recomputed for every message on every run (the same idempotence as `imc_tag_apply.sh`).
+
+- **hidden**: the sender's display name or the subject contains an invisible format character (Unicode category `Cf`: zero width space, bidi controls, etc.)
+- **unsigned**: the message came from outside (it has `Received`) but has no `DKIM-Signature` at all. A copy of your own sent mail has no `Received`, so it does not fire
+
+Applied to 181 real messages (excluding Teams), it tagged 34, all of them spam or phishing (no false positive).
+A mismatch between the `From`, `Return-Path` and DKIM `d=` domains was also tried and rejected.
+Phishing senders sign with domains they registered themselves, so the domains agree; its only hit was a false positive.
+For the same reason, verifying SPF/DKIM would hardly help (not in the specification; this is a guess).
+
+The remaining hard case is mail that uses a well-known brand as the display name and is sent, signed, from the sender's own domain.
+Only a rule of the form "the display name matches a brand and the domain is not the brand's" can catch it.
+Such a rule reveals which brands you use, so it belongs in `tag_rules.local.tsv` (not implemented).
+
+`imc_morning_run.sh` turns the notification query into `(<query>) and not tag:suspicious`.
+A phishing subject (such as "【要確認】") that matches an `actionable` subject rule is therefore not notified.
+`suspicious` was deliberately not made an `exclude_tags` entry (as `spam` is), to leave room for noticing a false positive.
+`imc_message_view.sh 'tag:suspicious'` shows them at any time.
+
+### Nonessential Senders Are Registered from the Viewer
+
+The `f` key of `imc_message_view.sh` appends the sender of the selected messages to `tag_rules.local.tsv`
+as one line, `nonessential	from	(^| )<address>$`, and re-applies both rules files to every message (`u` undoes it).
+A list of senders reveals which services you use, so it never goes into the public `tag_rules.tsv`.
+A human decides by a key press and a `y` confirmation, so this does not break the rule that rules-file changes need human confirmation (`instructions_to_ai_agent.md`).
+`NEW` is `tag:unread and not tag:suspicious and not tag:nonessential`.
+`nonessential` is not removed from the morning notification query: if a sender registered by mistake also lost its action-required notifications, the very miss that imc was built to prevent would recur.
+
 ## 8. Stages
 
 | Stage | Content | Status |
@@ -266,6 +300,8 @@ imc/
 ├── imc_mail_list.sh/.py          notmuch 検索 → tsv|json
 ├── imc_digest_format.py          一覧 → 通知本文
 ├── imc_digest_notify.sh          一覧 → 整形 → ntfy
+├── imc_suspicious_tag.sh/.py     Judges forgery from the header; recomputes tag:suspicious for all
+├── imc_message_view.sh/.py       One-screen CUI for every route (f registers a sender in tag_rules.local.tsv)
 ├── imc_morning_run.sh            毎朝の一本道（タスクスケジューラが叩く）
 └── _var/                         二次情報。.gitignore 対象
     ├── maildir/                  IMAP/POP3両方の複製

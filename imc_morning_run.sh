@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Run the whole morning pipeline: sync every account, re-apply the rules to
-# every message, and send one push notification.
+# every message, tag forged mail suspicious, and send one push notification.
+# Suspicious mail never reaches the notification, whatever <query> says: a
+# phishing subject such as "【要確認】" would otherwise match the actionable
+# rules. The query actually sent is "(<query>) and not tag:suspicious".
 # Called by the Windows Task Scheduler through wsl.exe, so it takes no
 # interactive input and writes a dated log under _var/log/.
 # A failed sync does not stop the notification: a notification that says
@@ -50,11 +53,17 @@ if ! "$SCRIPT_DIR/imc_mail_list.sh" '*' json \
   echo "$(stamp) $SCRIPT_NAME: tagging failed; continuing" >&2
 fi
 
+if ! "$SCRIPT_DIR/imc_mail_list.sh" '*' json \
+  | "$SCRIPT_DIR/imc_suspicious_tag.sh" >/dev/null; then
+  sync_note="${sync_note}${sync_note:+ }なりすまし判定に失敗しました。"
+  echo "$(stamp) $SCRIPT_NAME: suspicious tagging failed; continuing" >&2
+fi
+
 if [ -n "$sync_note" ]; then
   echo "$(stamp) $SCRIPT_NAME: degraded run: $sync_note" >&2
 fi
 
-if ! "$SCRIPT_DIR/imc_digest_notify.sh" "$query" "$sync_note"; then
+if ! "$SCRIPT_DIR/imc_digest_notify.sh" "($query) and not tag:suspicious" "$sync_note"; then
   echo "$(stamp) $SCRIPT_NAME: notification failed. Nothing will arrive on the phone today." >&2
   echo "Next: read $log_file and fix the cause; a missing morning notification is the only alarm this system has." >&2
   exit 1

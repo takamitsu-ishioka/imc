@@ -158,6 +158,7 @@ sequenceDiagram
   participant WSL as wsl.exe
   participant SY as imc_mail_sync.sh
   participant TA as imc_tag_apply.sh
+  participant ST as imc_suspicious_tag.sh
   participant DG as imc_digest_notify.sh
   participant N as ntfy
   participant P as スマートフォン
@@ -166,7 +167,8 @@ sequenceDiagram
   WSL->>SY: 全アカウント同期
   SY->>SY: mbsync → notmuch new
   WSL->>TA: 全件JSON | tag_rules.tsv を再適用
-  WSL->>DG: query + 異常メモ
+  WSL->>ST: 全件JSON | なりすまし判定（tag:suspicious）
+  WSL->>DG: (query) and not tag:suspicious + 異常メモ
   DG->>N: 差出人＋件名（0件でも送る）
   N->>P: 通知
   Note over P: 届かない日 = 仕組みの故障
@@ -228,6 +230,39 @@ imc_mail_list.sh '*' json | imc_tag_apply.sh tag_rules.tsv tag_rules.local.tsv -
 
 `imc_morning_run.sh`は`tag_rules.local.tsv`が存在する場合のみ自動で追加する。
 
+### なりすまし判定は規則ファイルではなくヘッダーから（2026-10-19）
+
+自前サーバーは`Authentication-Results`を付けないため、サーバーの判定は使えない。
+`imc_suspicious_tag.sh`が生ヘッダーを読み、次のどちらかに当たれば`tag:suspicious`を付ける。
+このタグは同スクリプトの所有物で、全件に対し毎回再計算する（`imc_tag_apply.sh`と同じ冪等性）。
+
+- **hidden**: 差出人の表示名か件名に、不可視の書式文字（Unicodeカテゴリ`Cf`。ゼロ幅空白・双方向制御など）がある
+- **unsigned**: 外部から届いた（`Received`がある）のに`DKIM-Signature`が1つも無い。自分の送信控えは`Received`を持たないので当たらない
+
+実メール181件（Teams除く）に当てた結果は34件で、すべて迷惑メールかフィッシングだった（誤判定0）。
+`From`・`Return-Path`・DKIM `d=`のドメイン不一致も試したが採らなかった。
+フィッシング業者は自分で取ったドメインで署名まで揃えるため一致してしまい、当たったのは誤判定1件だけだった。
+同じ理由で、SPF/DKIMの検証もほとんど効かないと推測する（仕様書に記載なし。推測です）。
+
+残る難敵は「表示名に有名ブランドを使い、自前ドメインから署名付きで送る」もので、
+「表示名がブランドに一致し、ドメインが正規のものでない」という規則でしか捕まえられない。
+これはどのブランドを使っているかを明かすので、書くなら`tag_rules.local.tsv`である（未実装）。
+
+`imc_morning_run.sh`は通知の検索を`(<query>) and not tag:suspicious`にする。
+フィッシングの件名（「【要確認】」等）が`actionable`の件名ルールに当たっても通知されない。
+`suspicious`を`exclude_tags`（`spam`と同じ扱い）にしなかったのは、誤判定に気づける余地を残すためである。
+`imc_message_view.sh 'tag:suspicious'`でいつでも見返せる。
+
+### 不要不急（nonessential）はビューアーから登録する
+
+`imc_message_view.sh`の`f`キーは、選んだメッセージの差出人を
+`nonessential	from	(^| )<address>$`の1行として`tag_rules.local.tsv`へ追記し、
+両方の規則ファイルを全件へ再適用する（`u`で取り消せる）。
+送信者の一覧は利用サービスを明かすので、公開の`tag_rules.tsv`には書かない。
+人間がキー操作と`y`の確認で決めるので、「規則ファイルの変更は人間の確認を得る」原則（`instructions_to_ai_agent.md`）に反しない。
+`NEW`は`tag:unread and not tag:suspicious and not tag:nonessential`である。
+`nonessential`は毎朝の通知の検索条件からは外さない。誤って登録した送信者の要対応通知まで消えると、imc を作るきっかけになった見逃しが再発するためである。
+
 ## 8. 段階
 
 | 段階 | 内容 | 状態 |
@@ -268,6 +303,8 @@ imc/
 ├── imc_mail_list.sh/.py          notmuch 検索 → tsv|json
 ├── imc_digest_format.py          一覧 → 通知本文
 ├── imc_digest_notify.sh          一覧 → 整形 → ntfy
+├── imc_suspicious_tag.sh/.py     ヘッダーからなりすましを判定し tag:suspicious を全件へ再計算
+├── imc_message_view.sh/.py       全経路を1画面で読む CUI（f で差出人を tag_rules.local.tsv へ登録）
 ├── imc_morning_run.sh            毎朝の一本道（タスクスケジューラが叩く）
 └── _var/                         二次情報。.gitignore 対象
     ├── maildir/                  IMAP/POP3両方の複製
