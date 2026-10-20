@@ -1,13 +1,17 @@
 """Minimal Microsoft Graph client shared by the imc_teams_* scripts.
 
-Not run directly. Imported by imc_teams_auth.py, imc_teams_channel_list.py and
-imc_teams_message_list.py.
+Not run directly. Imported by the imc_teams_*.py scripts.
 
 Authentication is the OAuth2 device code flow with a public client (no client
 secret). Tenant and client ids come from .env through imc_secret_get.sh. The
 tokens are generated data, not configuration: the refresh token rotates on
 every use, so it cannot live in the hand-written .env. They are kept in
 _var/teams/token.json (mode 600, gitignored like the rest of _var/).
+
+One sign-in both reads and posts. Splitting it into a reading token and a
+posting token was tried (2026-10-20) and does not work: Entra ID records
+consent per app and user, and every token of the app then carries every
+consented scope. Real separation would need a second app registration.
 
 Refresh policy: refresh only when the access token has expired or Graph
 answers 401, and retry the request once. Refreshing more often than needed
@@ -28,13 +32,15 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TOKEN_DIR = os.path.join(SCRIPT_DIR, "_var", "teams")
 TOKEN_FILE = os.path.join(TOKEN_DIR, "token.json")
 GRAPH = "https://graph.microsoft.com/v1.0"
-# Delegated permissions. ChannelMessage.Read.All needs tenant admin consent.
+# Delegated permissions. ChannelMessage.Read.All needs tenant admin consent;
+# ChannelMessage.Send (imc_teams_message_post.sh) does not.
 SCOPES = [
     "offline_access",
     "User.Read",
     "Team.ReadBasic.All",
     "Channel.ReadBasic.All",
     "ChannelMessage.Read.All",
+    "ChannelMessage.Send",
 ]
 EXPIRY_MARGIN_SECONDS = 120
 MAX_RETRIES = 3
@@ -172,19 +178,30 @@ def access_token(force_refresh=False):
 
 
 def get(path_or_url):
-    """GET one Graph resource. Refreshes once on 401 and honours Retry-After on 429/503."""
+    """GET one Graph resource."""
+    return request("GET", path_or_url)
+
+
+def post(path, body):
+    """POST a JSON body to Graph and return the JSON answer."""
+    return request("POST", path, body)
+
+
+def request(method, path_or_url, body=None):
+    """One Graph call. Refreshes once on 401 and honours Retry-After on 429/503."""
     url = path_or_url if path_or_url.startswith("https://") else GRAPH + path_or_url
+    data = json.dumps(body).encode() if body is not None else None
     refreshed = False
     for attempt in range(MAX_RETRIES + 1):
-        req = urllib.request.Request(url, headers={
-            "Authorization": "Bearer " + access_token(),
-            "Accept": "application/json",
-        })
+        headers = {"Authorization": "Bearer " + access_token(), "Accept": "application/json"}
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
                 return json.loads(resp.read().decode())
         except urllib.error.HTTPError as e:
-            body = e.read().decode(errors="replace")
+            text = e.read().decode(errors="replace")
             if e.code == 401 and not refreshed:
                 refreshed = True
                 access_token(force_refresh=True)
@@ -195,9 +212,10 @@ def get(path_or_url):
                 time.sleep(wait)
                 continue
             if e.code == 403:
-                fail("Graph refused %s (HTTP 403): %s" % (url, body[:300]),
-                     "the app probably lacks admin consent for ChannelMessage.Read.All, or you are not a member of that team.")
-            fail("Graph error HTTP %d for %s: %s" % (e.code, url, body[:300]), "retry later.")
+                fail("Graph refused %s %s (HTTP 403): %s" % (method, url, text[:300]),
+                     "the app probably lacks consent for ChannelMessage.Read.All / ChannelMessage.Send "
+                     "(run imc_teams_auth.sh login again), or you are not a member of that team.")
+            fail("Graph error HTTP %d for %s %s: %s" % (e.code, method, url, text[:300]), "retry later.")
     fail("Graph kept throttling %s." % url, "retry later.")
 
 

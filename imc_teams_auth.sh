@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sign in to Microsoft Graph for reading Teams channel messages, or show the
+# Sign in to Microsoft Graph for reading and posting Teams channel messages, or show the
 # current sign-in state.
 # login  : device code flow. Prints a URL and a code on stderr; open the URL in
 #          any browser, enter the code and sign in with your work account. This

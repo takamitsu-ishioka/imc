@@ -23,6 +23,10 @@ def main():
         g.stderr("ChannelMessage.Read.All is NOT granted: channel messages cannot be read.")
         print("Next: ask a tenant admin to grant admin consent to the app, then run login again.", file=sys.stderr)
         return 1
+    if "ChannelMessage.Send" not in token.get("scope", ""):
+        g.stderr("ChannelMessage.Send is NOT granted: imc_teams_message_post.sh cannot post (reading works).")
+        print("Next: run login again to consent to it.", file=sys.stderr)
+        return 1
     print("Next: list your channels with imc_teams_channel_list.sh tsv", file=sys.stderr)
     return 0
 
