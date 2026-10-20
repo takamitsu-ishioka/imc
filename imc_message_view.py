@@ -19,6 +19,12 @@ since a sender list says which services you use) and re-applies both rules
 files to every message, so past and future mail from that sender is tagged
 nonessential. NEW leaves nonessential (and suspicious) mail out; to undo a
 registration later, delete its line from tag_rules.local.tsv.
+t opens the tag filter: every tag in the index (plus deleted and spam, which
+notmuch-config hides unless asked for) with a three-way switch each: [ ] any,
+[+] must have it, [-] must not have it. Space cycles the switch, Enter applies
+the resulting query ("tag:a and not tag:b ..."), Escape closes the frame
+without changing anything. It starts from the current query when that query
+is of this simple form (NEW is), and from all [ ] otherwise.
 Mouse: dragging selects text inside the one pane where the drag started (the
 terminal's own selection would run across the panes), and releasing copies
 it to the Windows clipboard through clip.exe. Lines folded to fit the pane
@@ -44,7 +50,7 @@ RULES = os.path.join(SCRIPT_DIR, "tag_rules.tsv")
 LOCAL_RULES = os.path.join(SCRIPT_DIR, "tag_rules.local.tsv")
 NONESSENTIAL = "nonessential"
 KEYS = ("v:open/close right pane  Enter:view  Tab/←→:focus  ↑↓ PgUp/PgDn Home/End:move in focus  Space:check (check,move,check = range)  "
-        "a/A:all/none  d:delete  f:sender nonessential  u:undo  r:reload  q:quit  "
+        "a/A:all/none  t:tag filter  d:delete  f:sender nonessential  u:undo  r:reload  q:quit  "
         "mouse drag:copy in one pane  wheel:scroll")
 PANES = ("list", "header", "body")   # Tab cycles in this order
 # Ctrl+Home / Ctrl+End have no curses constant; ncurses names them kHOM5 / kEND5.
@@ -240,6 +246,27 @@ def write_local_rules(lines):
         f.write("".join(line + "\n" for line in lines))
 
 
+FILTER_CYCLE = {" ": "+", "+": "-", "-": " "}
+FILTER_TERM = re.compile(r"^(not )?tag:([A-Za-z0-9_.-]+)$")
+
+
+def parse_filter(query):
+    """{tag: "+" or "-"} for a query of the form "tag:a and not tag:b ...", else None."""
+    states = {}
+    for term in query.split(" and "):
+        match = FILTER_TERM.match(term.strip())
+        if not match:
+            return None
+        states[match.group(2)] = "-" if match.group(1) else "+"
+    return states
+
+
+def build_filter(tags, states):
+    terms = [("tag:%s" if states.get(t) == "+" else "not tag:%s") % t
+             for t in tags if states.get(t, " ") != " "]
+    return " and ".join(terms) or "*"
+
+
 class Viewer:
     def __init__(self, screen, query):
         self.screen, self.query = screen, query
@@ -375,6 +402,53 @@ class Viewer:
         self.undo = ("sender", added)
         self.reload(keep_status=True)
         self.status = "nonessential: %s (u to undo)" % shown
+
+    def choose_filter(self):
+        """The tag filter frame (a selection frame of the layered input model):
+        Space cycles [ ] -> [+] -> [-], Enter applies, Escape cancels."""
+        tags = sorted(set(notmuch("search", "--output=tags", "--exclude=false", "*").split())
+                      | {"deleted", "spam"})
+        parsed = parse_filter(self.query)
+        states = dict(parsed or {})
+        tags += sorted(t for t in states if t not in tags)
+        cur = 0
+        note = "" if parsed is not None else "  (current query is not a plain tag filter; starting empty)"
+        while True:
+            self.draw()
+            rows, cols = self.screen.getmaxyx()
+            width = min(cols - 4, 72)
+            height = min(rows - 4, len(tags) + 4)
+            y0, x0 = (rows - height) // 2, (cols - width) // 2
+            visible = height - 4
+            top = min(max(0, cur - visible + 1), max(0, len(tags) - visible))
+            lines = [" tag filter: Space [ ]>[+]>[-]  Enter apply  Esc cancel" + note, ""]
+            for i in range(top, min(len(tags), top + visible)):
+                lines.append("  [%s] %s" % (states.get(tags[i], " "), tags[i]))
+            lines += [""] * (height - 2 - len(lines))
+            lines.append(" -> " + build_filter(tags, states))
+            lines.append("")
+            for row, text in enumerate(lines[:height]):
+                attr = curses.A_REVERSE if row == 2 + cur - top and 2 <= row < height - 2 else curses.A_NORMAL
+                self.screen.addstr(y0 + row, x0, fit(text, width), attr | curses.A_BOLD)
+            self.screen.refresh()
+            key = self.screen.get_wch()
+            if key in (curses.KEY_DOWN, "j"):
+                cur = min(cur + 1, len(tags) - 1)
+            elif key in (curses.KEY_UP, "k"):
+                cur = max(cur - 1, 0)
+            elif key == " ":
+                states[tags[cur]] = FILTER_CYCLE[states.get(tags[cur], " ")]
+            elif key in ("\n", "\r", curses.KEY_ENTER):
+                query = build_filter(tags, states)
+                if query != self.query:
+                    self.query = query
+                    self.checked = set()
+                    self.reload(keep_status=True)
+                self.status = "%d messages" % len(self.items)
+                return
+            elif key in ("\x1b", "q"):
+                self.status = "filter unchanged"
+                return
 
     def reload(self, keep_status=False):
         focus = self.items[self.cur]["mid"] if self.items else None
@@ -687,6 +761,8 @@ class Viewer:
                 self.view()
             elif key == "d":
                 self.delete()
+            elif key == "t":
+                self.choose_filter()
             elif key == "f":
                 self.register_senders()
             elif key == "u":

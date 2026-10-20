@@ -16,6 +16,9 @@
 # f appends a from rule to tag_rules.local.tsv (gitignored) and re-applies the
 # rules to every message, so all mail from that sender, past and future, gets
 # tag:nonessential. Remove the line from that file to take it back later.
+# t opens the tag filter: each tag can be [ ] any, [+] required or [-]
+# excluded (Space cycles, Enter applies, Escape cancels); the list is then
+# reloaded with the resulting query.
 # Mouse: a drag selects text inside the pane where it started (the terminal's
 # own selection runs across the panes) and copies it to the Windows clipboard
 # with clip.exe, folded lines joined back; a click focuses a pane or row, and
