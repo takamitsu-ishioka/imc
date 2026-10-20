@@ -24,8 +24,9 @@
 # with clip.exe, folded lines joined back; a click focuses a pane or row, and
 # the wheel scrolls the pane under the pointer.
 # Viewing a message marks it read.
-# <query> is a notmuch query, or NEW for every unread message that is neither
-# suspicious (see imc_suspicious_tag.sh) nor nonessential.
+# <query> is a notmuch query, NEW for every unread message that is neither
+# suspicious (see imc_suspicious_tag.sh) nor nonessential, or LAST for the
+# query of the previous run (as left by t; kept in _var/view_last_query).
 set -euo pipefail
 
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
@@ -33,8 +34,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   echo "$SCRIPT_NAME: $1" >&2
-  echo "usage: $SCRIPT_NAME <NEW|query>" >&2
+  echo "usage: $SCRIPT_NAME <NEW|LAST|query>" >&2
   echo "example: $SCRIPT_NAME NEW" >&2
+  echo "example: $SCRIPT_NAME LAST" >&2
   echo "example: $SCRIPT_NAME 'tag:unread and not folder:/teams-.*/'" >&2
   echo "example: $SCRIPT_NAME 'tag:suspicious or tag:nonessential'" >&2
   awk 'NR==1{next} /^#/{sub(/^# ?/, ""); print; next} {exit}' "${BASH_SOURCE[0]}" >&2
@@ -55,5 +57,14 @@ if [ ! -t 0 ] || [ ! -t 1 ]; then
 fi
 query="$1"
 [ "$query" = "NEW" ] && query="tag:unread and not tag:suspicious and not tag:nonessential"
+if [ "$query" = "LAST" ]; then
+  last_file="$SCRIPT_DIR/_var/view_last_query"
+  if [ ! -s "$last_file" ]; then
+    usage "No previous query ($last_file not found)"
+    echo "Next: run $SCRIPT_NAME NEW once; the query you leave it with is kept for LAST." >&2
+    exit 1
+  fi
+  query="$(head -n 1 "$last_file")"
+fi
 
 exec python3 "$SCRIPT_DIR/imc_message_view.py" "$query"

@@ -25,6 +25,8 @@ notmuch-config hides unless asked for) with a three-way switch each: [ ] any,
 the resulting query ("tag:a and not tag:b ..."), Escape closes the frame
 without changing anything. It starts from the current query when that query
 is of this simple form (NEW is), and from all [ ] otherwise.
+The query in use is saved to _var/view_last_query at start and whenever t
+applies a new one, so that imc_message_view.sh LAST starts where you left off.
 Mouse: dragging selects text inside the one pane where the drag started (the
 terminal's own selection would run across the panes), and releasing copies
 it to the Windows clipboard through clip.exe. Lines folded to fit the pane
@@ -49,6 +51,7 @@ MAIL_ROOT = os.path.join(SCRIPT_DIR, "_var", "maildir")
 RULES = os.path.join(SCRIPT_DIR, "tag_rules.tsv")
 LOCAL_RULES = os.path.join(SCRIPT_DIR, "tag_rules.local.tsv")
 NONESSENTIAL = "nonessential"
+LAST_QUERY = os.path.join(SCRIPT_DIR, "_var", "view_last_query")
 KEYS = ("v:open/close right pane  Enter:view  Tab/←→:focus  ↑↓ PgUp/PgDn Home/End:move in focus  Space:check (check,move,check = range)  "
         "a/A:all/none  t:tag filter  d:delete  f:sender nonessential  u:undo  r:reload  q:quit  "
         "mouse drag:copy in one pane  wheel:scroll")
@@ -244,6 +247,15 @@ def local_rule_lines():
 def write_local_rules(lines):
     with open(LOCAL_RULES, "w", encoding="utf-8") as f:
         f.write("".join(line + "\n" for line in lines))
+
+
+def save_query(query):
+    """Remember the query for imc_message_view.sh LAST. A failure only loses that convenience."""
+    try:
+        with open(LAST_QUERY, "w", encoding="utf-8") as f:
+            f.write(query + "\n")
+    except OSError:
+        pass
 
 
 FILTER_CYCLE = {" ": "+", "+": "-", "-": " "}
@@ -449,6 +461,7 @@ class Viewer:
                 query = build_filter(tags, states)
                 if query != self.query:
                     self.query = query
+                    save_query(query)
                     self.checked = set()
                     self.reload(keep_status=True)
                 self.status = "%d messages" % len(self.items)
@@ -797,6 +810,7 @@ def main():
     locale.setlocale(locale.LC_ALL, "")
     os.environ.setdefault("ESCDELAY", "25")
     query = sys.argv[1]
+    save_query(query)
     try:
         curses.wrapper(lambda screen: Viewer(screen, query).run())
     finally:
