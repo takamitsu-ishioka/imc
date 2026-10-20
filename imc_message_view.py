@@ -19,6 +19,11 @@ since a sender list says which services you use) and re-applies both rules
 files to every message, so past and future mail from that sender is tagged
 nonessential. NEW leaves nonessential (and suspicious) mail out; to undo a
 registration later, delete its line from tag_rules.local.tsv.
+! flags the checked messages (or the focused one) as needing action: it adds
+the notmuch tag flagged (the standard "flag"/star; imc syncs pull only, so it
+never reaches the server), or removes it when every one of them already has
+it. The list shows flagged messages with "!". (actionable cannot be used for
+this: it is owned by tag_rules.tsv and recomputed on every fetch.)
 t opens the tag filter: every tag in the index (plus deleted and spam, which
 notmuch-config hides unless asked for) with a three-way switch each: [ ] any,
 [+] must have it, [-] must not have it. Space cycles the switch, Enter applies
@@ -53,7 +58,7 @@ LOCAL_RULES = os.path.join(SCRIPT_DIR, "tag_rules.local.tsv")
 NONESSENTIAL = "nonessential"
 LAST_QUERY = os.path.join(SCRIPT_DIR, "_var", "view_last_query")
 KEYS = ("v:open/close right pane  Enter:view  Tab/←→:focus  ↑↓ PgUp/PgDn Home/End:move in focus  Space:check (check,move,check = range)  "
-        "a/A:all/none  t:tag filter  d:delete  f:sender nonessential  u:undo  r:reload  q:quit  "
+        "a/A:all/none  t:tag filter  !:flag  d:delete  f:sender nonessential  u:undo  r:reload  q:quit  "
         "mouse drag:copy in one pane  wheel:scroll")
 PANES = ("list", "header", "body")   # Tab cycles in this order
 # Ctrl+Home / Ctrl+End have no curses constant; ncurses names them kHOM5 / kEND5.
@@ -158,6 +163,8 @@ def load(query):
             "from": " ".join((r["from_name"] or r["from_addr"] or "").split()),
             "addr": (r["from_addr"] or "").strip().lower(),
             "subject": subject,
+            "flagged": "flagged" in r["tags"].split(","),
+            "read": "unread" not in r["tags"].split(","),
         })
     return items
 
@@ -292,7 +299,7 @@ class Viewer:
         self.header_folded, self.body_folded = [], []
         self.header_top = self.body_top = 0
         self.sel = None        # {"pane", "a": (line, char), "b": (line, char)}; a is where the drag began
-        self.undo = None       # ("delete", Message-IDs) or ("sender", rule lines added)
+        self.undo = None       # ("delete", Message-IDs), ("sender", rule lines added) or ("flag", (added, removed))
         self.status = "%d messages" % len(self.items)
         self.focus = "list"    # the pane that ↑↓ PgUp/PgDn Home/End move
         self.right_open = False  # starts closed; v toggles it, Enter (or Right) opens it
@@ -360,6 +367,25 @@ class Viewer:
         self.cur = mids_left.index(target) if target else 0
         self.status = "deleted %d (u to undo)" % len(mids)
 
+    def toggle_flag(self):
+        """Flag the checked messages (or the focused one), or unflag them if all are flagged."""
+        targets = [it for it in self.items if it["mid"] in self.checked]
+        if not targets and self.items:
+            targets = [self.items[self.cur]]
+        if not targets:
+            return
+        flag = not all(it["flagged"] for it in targets)
+        changed = [it for it in targets if it["flagged"] != flag]
+        query = []
+        for it in changed:
+            query += (["or"] if query else []) + ["id:" + it["mid"]]
+        notmuch("tag", "+flagged" if flag else "-flagged", "--", *query)
+        for it in changed:
+            it["flagged"] = flag
+        mids = [it["mid"] for it in changed]
+        self.undo = ("flag", (mids, []) if flag else ([], mids))
+        self.status = "%s %d (u to undo)" % ("flagged" if flag else "unflagged", len(changed))
+
     def undo_last(self):
         if not self.undo:
             self.status = "nothing to undo"
@@ -371,6 +397,12 @@ class Viewer:
                 query += (["or"] if query else []) + ["id:" + mid]
             notmuch("tag", "-deleted", "+unread", "--", *query)
             self.status = "restored %d" % len(values)
+        elif kind == "flag":
+            added, removed = values
+            for mids, op in ((added, "-flagged"), (removed, "+flagged")):
+                if mids:
+                    notmuch("tag", op, "--", *sum((["or", "id:" + m] for m in mids), [])[1:])
+            self.status = "flag change undone"
         else:
             added = set(values)
             write_local_rules([line for line in local_rule_lines() if line not in added])
@@ -600,7 +632,7 @@ class Viewer:
         """The text of list row i, cut to the pane width (what the list pane shows)."""
         it = self.items[i]
         box = "[x]" if it["mid"] in self.checked else "[ ]"
-        mark = "*" if it["mid"] == self.viewed else (" " if it.get("read") else "N")
+        mark = ("!" if it["flagged"] else " ") + ("*" if it["mid"] == self.viewed else (" " if it.get("read") else "N"))
         line = "%s%s %s %s %s  %s" % (box, mark, it["date"], fit(it["account"], 8),
                                       fit(it["from"], 12), it["subject"])
         return fit(line, self.left_width()).rstrip()
@@ -781,6 +813,8 @@ class Viewer:
                 self.view()
             elif key == "d":
                 self.delete()
+            elif key == "!":
+                self.toggle_flag()
             elif key == "t":
                 self.choose_filter()
             elif key == "f":
