@@ -236,6 +236,14 @@ imc_mail_list.sh '*' json | imc_tag_apply.sh tag_rules.tsv tag_rules.local.tsv -
 `imc_suspicious_tag.sh`が生ヘッダーを読み、次のどちらかに当たれば`tag:suspicious`を付ける。
 このタグは同スクリプトの所有物で、全件に対し毎回再計算する（`imc_tag_apply.sh`と同じ冪等性）。
 
+**いつ再計算するか**（2026-10-20 変更）: `imc_fetch.sh`が、どの経路を取得した後でも
+`imc_tag_apply.sh`（規則ファイル）と`imc_suspicious_tag.sh`を全件へ実行する。
+当初は`imc_morning_run.sh`の中だけで実行していたため、朝から翌朝までに届いたメール
+（取得は外部の cron が数分毎に行う）にはタグが付かず、自ドメインを詐称したメールが
+`NEW`に出てしまった。この再計算も`_var/fetch.lock`を取り、取得中の`notmuch new`と
+索引への書き込みが重ならないようにしている。`imc_morning_run.sh`の再計算は、失敗を
+通知へ書き添える役目があるので残す（冪等なので二重に実行しても害はない）。
+
 - **hidden**: 差出人の表示名か件名に、不可視の書式文字（Unicodeカテゴリ`Cf`。ゼロ幅空白・双方向制御など）がある
 - **unsigned**: 外部から届いた（`Received`がある）のに`DKIM-Signature`が1つも無い。自分の送信控えは`Received`を持たないので当たらない
 
@@ -298,6 +306,7 @@ imc/
 ├── tag_rules.local.tsv.template  同上・個人を特定しうる送信者ルール用
 │   └── tag_rules.local.tsv       （.gitignore対象。ユーザーが作る）
 ├── imc_secret_get.sh             .env から1値を取り出す（mbsync/getmail 共用）
+├── imc_fetch.sh                  経路(mail|gmail|teams|all)ごとの取得 → 全件のタグ再計算
 ├── imc_mail_sync.sh              mbsync(IMAP) / getmail(POP3) → notmuch new
 ├── imc_tag_apply.sh/.py          ルールファイル(複数可)を全件へ再適用（stdin=全件JSON）
 ├── imc_mail_list.sh/.py          notmuch 検索 → tsv|json

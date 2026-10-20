@@ -234,6 +234,14 @@ The self-hosted server adds no `Authentication-Results`, so there is no server v
 `imc_suspicious_tag.sh` reads the raw header and tags the message `tag:suspicious` if either of the following fires.
 The tag is owned by that script and is recomputed for every message on every run (the same idempotence as `imc_tag_apply.sh`).
 
+**When it is recomputed** (changed 2026-10-20): `imc_fetch.sh`, after fetching any route,
+runs `imc_tag_apply.sh` (the rules files) and `imc_suspicious_tag.sh` on every message.
+At first they ran only inside `imc_morning_run.sh`, so mail that arrived between two mornings
+(fetching is done every few minutes by an external cron) went untagged, and mail forging the
+receiving domain showed up in `NEW`. This recomputation also holds `_var/fetch.lock`, so it never
+writes the index while a fetch is running `notmuch new`. The recomputation in `imc_morning_run.sh`
+stays, because it also reports failures in the notification (it is idempotent, so running twice is harmless).
+
 - **hidden**: the sender's display name or the subject contains an invisible format character (Unicode category `Cf`: zero width space, bidi controls, etc.)
 - **unsigned**: the message came from outside (it has `Received`) but has no `DKIM-Signature` at all. A copy of your own sent mail has no `Received`, so it does not fire
 
@@ -295,6 +303,7 @@ imc/
 ├── tag_rules.local.tsv.template  同上・個人を特定しうる送信者ルール用
 │   └── tag_rules.local.tsv       （.gitignore対象。ユーザーが作る）
 ├── imc_secret_get.sh             .env から1値を取り出す（mbsync/getmail 共用）
+├── imc_fetch.sh                  Fetch per route (mail|gmail|teams|all), then recompute every tag
 ├── imc_mail_sync.sh              mbsync(IMAP) / getmail(POP3) → notmuch new
 ├── imc_tag_apply.sh/.py          ルールファイル(複数可)を全件へ再適用（stdin=全件JSON）
 ├── imc_mail_list.sh/.py          notmuch 検索 → tsv|json

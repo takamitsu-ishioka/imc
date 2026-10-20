@@ -11,6 +11,12 @@
 #           the others; the exit code is then 1.
 # Each route only fetches what is new (mbsync/getmail keep their own state,
 # Teams starts from the newest stored message), so running often is cheap.
+# After the routes, the tags are recomputed for every message: tag_rules.tsv
+# (and tag_rules.local.tsv if it exists) through imc_tag_apply.sh, then
+# imc_suspicious_tag.sh. Mail that arrives between two morning runs is thus
+# tagged (suspicious, nonessential, ...) within one fetch, not the next day.
+# This step holds _var/fetch.lock too, so it never writes the notmuch index
+# while another fetch is indexing.
 set -euo pipefail
 
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
@@ -95,6 +101,23 @@ for route in "${routes[@]}"; do
   echo "$(stamp) $index/${#routes[@]} route $route" >&2
   run_route "$route" || failed+=("$route")
 done
+
+retag() {
+  local rules_files=("$SCRIPT_DIR/tag_rules.tsv")
+  [ -f "$SCRIPT_DIR/tag_rules.local.tsv" ] && rules_files+=("$SCRIPT_DIR/tag_rules.local.tsv")
+  (
+    exec 9>"$SCRIPT_DIR/_var/fetch.lock"
+    if ! flock --wait 900 9; then
+      echo "$(stamp) retag: another fetch has held _var/fetch.lock for 15 minutes; skipped" >&2
+      exit 1
+    fi
+    "$SCRIPT_DIR/imc_mail_list.sh" '*' json | "$SCRIPT_DIR/imc_tag_apply.sh" "${rules_files[@]}" >/dev/null \
+      && "$SCRIPT_DIR/imc_mail_list.sh" '*' json | "$SCRIPT_DIR/imc_suspicious_tag.sh" >/dev/null
+  )
+}
+
+echo "$(stamp) retag: rules and suspicious, every message" >&2
+retag || failed+=("retag")
 
 if [ "${#failed[@]}" -gt 0 ]; then
   echo "$SCRIPT_NAME: failed routes: ${failed[*]}" >&2

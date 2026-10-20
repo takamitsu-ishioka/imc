@@ -4,10 +4,11 @@
 # and the body (bottom right) of the message being viewed, the keys at the
 # bottom. One pane has the focus (Tab cycles list/header/body, Left = list,
 # Right = body); Up/Down, PgUp/PgDn and Home/End move within that pane.
-# p opens/closes the right panes (closed, the list takes the whole width;
-# v or Right opens them again).
+# The right panes start closed, so the list takes the whole width. v opens
+# them on the focused message and closes them again; Enter always shows the
+# focused message (opening them if needed), and Right opens them too.
 # Space checks a message; check, move, check checks the whole range;
-# v views the focused message, d deletes the
+# d deletes the
 # checked messages (or the focused one), f marks their senders nonessential,
 # u undoes the last delete or f.
 # "Delete" tags the message deleted in notmuch; the file stays in _var/maildir

@@ -43,8 +43,8 @@ MAIL_ROOT = os.path.join(SCRIPT_DIR, "_var", "maildir")
 RULES = os.path.join(SCRIPT_DIR, "tag_rules.tsv")
 LOCAL_RULES = os.path.join(SCRIPT_DIR, "tag_rules.local.tsv")
 NONESSENTIAL = "nonessential"
-KEYS = ("p:right pane on/off  Tab/←→:focus  ↑↓ PgUp/PgDn Home/End:move in focus  Space:check (check,move,check = range)  "
-        "a/A:all/none  v:view  d:delete  f:sender nonessential  u:undo  r:reload  q:quit  "
+KEYS = ("v:open/close right pane  Enter:view  Tab/←→:focus  ↑↓ PgUp/PgDn Home/End:move in focus  Space:check (check,move,check = range)  "
+        "a/A:all/none  d:delete  f:sender nonessential  u:undo  r:reload  q:quit  "
         "mouse drag:copy in one pane  wheel:scroll")
 PANES = ("list", "header", "body")   # Tab cycles in this order
 # Ctrl+Home / Ctrl+End have no curses constant; ncurses names them kHOM5 / kEND5.
@@ -256,7 +256,7 @@ class Viewer:
         self.undo = None       # ("delete", Message-IDs) or ("sender", rule lines added)
         self.status = "%d messages" % len(self.items)
         self.focus = "list"    # the pane that ↑↓ PgUp/PgDn Home/End move
-        self.right_open = True # p closes the right panes so the list takes the whole width
+        self.right_open = False  # starts closed; v toggles it, Enter (or Right) opens it
 
     # --- actions -------------------------------------------------------
     def toggle(self):
@@ -663,8 +663,6 @@ class Viewer:
                 self.move(to="top")
             elif key in END_KEYS or key_name(key) in END_NAMES:
                 self.move(to="end")
-            elif key == "p":
-                self.toggle_right()
             elif key == "\t" and self.right_open:
                 self.focus = PANES[(PANES.index(self.focus) + 1) % len(PANES)]
             elif key == curses.KEY_BTAB and self.right_open:
@@ -683,6 +681,8 @@ class Viewer:
             elif key == "A":
                 self.checked = set()
                 self.anchor = None
+            elif key == "v" and self.right_open:
+                self.toggle_right()
             elif key in ("v", "\n", "\r", curses.KEY_ENTER):
                 self.view()
             elif key == "d":
