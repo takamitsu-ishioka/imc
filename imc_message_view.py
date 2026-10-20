@@ -333,12 +333,19 @@ class Viewer:
         notmuch("tag", "+deleted", "-unread", "--", *query)
         self.undo = ("delete", mids)
         gone = set(mids)
+        # The focus follows the message, not the row number: it stays on the focused
+        # message if that survives, else moves to the first survivor below it (or,
+        # if none is below, the nearest one above).
+        below = [it["mid"] for it in self.items[self.cur:] if it["mid"] not in gone]
+        above = [it["mid"] for it in self.items[:self.cur] if it["mid"] not in gone]
+        target = below[0] if below else (above[-1] if above else None)
         self.items = [it for it in self.items if it["mid"] not in gone]
         self.checked -= gone
         self.anchor = None
         if self.viewed in gone:
             self.viewed, self.header_lines, self.body_lines = None, [], []
-        self.cur = min(self.cur, max(len(self.items) - 1, 0))
+        mids_left = [it["mid"] for it in self.items]
+        self.cur = mids_left.index(target) if target else 0
         self.status = "deleted %d (u to undo)" % len(mids)
 
     def undo_last(self):
