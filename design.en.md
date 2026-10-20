@@ -276,7 +276,7 @@ A human decides by a key press and a `y` confirmation, so this does not break th
 | 2 | Sorting via tag_rules.tsv + morning notification | Implemented |
 | 2.5 | POP3-only third-party ISP (getmail) | Implemented |
 | 3 | Gmail (app password) | Possible by only appending to `.env` |
-| 4 | Outlook (OAuth2 required) | Not implemented |
+| 4 | Outlook (Graph API, Mail.Read) | On hold (awaiting admin consent) |
 | 5 | Teams (Graph API, self-built) | Implemented |
 
 Stage 2.5 is a branch for third-party ISPs that don't offer IMAP (and where we have no administrator privileges).
@@ -285,8 +285,18 @@ Because mbsync is IMAP-only and cannot speak POP3 at all, setting `PROTOCOL` in 
 Real example: Asahi Net (still active as a notification destination for AWS).
 
 Stage 3 only requires adding an account to `.env` and rerunning `initialize.sh`.  
-Stage 4 involves hooking an OAuth2 access-token retrieval script into mbsync's `PassCmd`.  
-It is expected to have the same structure as `~/bin/gcal/refresh_access_token.sh` (not stated in the specification. This is conjecture).  
+Stage 4 was first expected to hook an OAuth2 access-token retrieval script into mbsync's `PassCmd`,
+but the plan changed on 2026-10-20. Stage 5 (Teams) already provides the Graph API authentication (app registration,
+device code flow, token handling), so the same app gets the delegated permission `Mail.Read`, and every message in the
+Inbox is fetched as raw MIME with `GET /me/messages/{id}/$value` and stored in `_var/maildir/outlook/`.
+Because it is raw MIME, forgery detection and the viewer work as for any other mail.  
+However, the tenant requires admin consent for `Mail.Read` (`ChannelMessage.Send` could be consented to by the user).
+The IMAP route's `IMAP.AccessAsUser.All` is expected to need consent as well (not stated in the specification. This is conjecture).
+Stage 4 is therefore on hold, and Outlook is read on the web.  
+To resume: (1) add `Mail.Read` to the app registration's API permissions, (2) ask an admin to "Grant admin consent",
+(3) add `Mail.Read` to `SCOPES` in `imc_teams_graph.py` and run `imc_teams_auth.sh login` **right after**.
+`SCOPES` is requested on every token refresh, so adding it before consent makes the cron Teams fetch fail to refresh.
+Also, mail inside the tenant usually has no DKIM signature, so check on real mail that `imc_suspicious_tag.sh`'s unsigned does not misfire.  
 
 ## 9. File Layout
 

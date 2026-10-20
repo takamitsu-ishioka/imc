@@ -279,7 +279,7 @@ imc_mail_list.sh '*' json | imc_tag_apply.sh tag_rules.tsv tag_rules.local.tsv -
 | 2 | tag_rules.tsv による仕分け ＋ 毎朝通知 | 実装済 |
 | 2.5 | POP3専用の第三者ISP（getmail） | 実装済 |
 | 3 | Gmail（アプリパスワード） | `.env` 追記のみで可 |
-| 4 | Outlook（OAuth2 が必要） | 未実装 |
+| 4 | Outlook（Graph API, Mail.Read） | 保留（管理者の承認待ち） |
 | 5 | Teams（Graph API, 自作） | 実装済 |
 
 段階2.5は、IMAPを提供しない（かつ管理者権限も無い）第三者ISPのための分岐である。
@@ -288,8 +288,18 @@ mbsyncはIMAP専用でPOP3を一切話せないため、`.env`の`PROTOCOL`を`P
 生成する。サーバー側には一切触らない。実例: Asahi Net（AWSの通知先として現役）。
 
 段階3は `.env` にアカウントを足して `initialize.sh` を再実行するだけでよい。  
-段階4は mbsync の `PassCmd` に OAuth2 アクセストークン取得スクリプトを噛ませる。  
-`~/bin/gcal/refresh_access_token.sh` と同じ構造になる見込みである（仕様書に記載なし。推測です）。  
+段階4は、当初 mbsync の `PassCmd` に OAuth2 アクセストークン取得スクリプトを噛ませる見込みだったが、
+2026-10-20 に方針を変えた。段階5（Teams）で Graph API の認証（アプリ登録・デバイスコードフロー・トークン管理）が
+揃ったので、同じアプリに委任権限 `Mail.Read` を足し、受信トレイの各メッセージを
+`GET /me/messages/{id}/$value` で生の MIME のまま取得して `_var/maildir/outlook/` へ置く。
+生の MIME なので、なりすまし判定やビューアーは他のメールと同じに働く。  
+ところが、テナントの設定で `Mail.Read` には管理者の承認が必要だった（`ChannelMessage.Send` は利用者が自分で同意できた）。
+IMAP 方式の `IMAP.AccessAsUser.All` も同様に承認が要る見込みである（仕様書に記載なし。推測です）。
+そのため保留とし、Outlook は Web 版で見る。  
+再開するときは、①アプリ登録の API のアクセス許可に `Mail.Read` を追加、②管理者に「管理者の同意を与える」を依頼、
+③ `imc_teams_graph.py` の `SCOPES` に `Mail.Read` を足し、**直後に** `imc_teams_auth.sh login` する。
+`SCOPES` はトークン更新のたびに要求されるので、同意前に足すと cron の Teams 取得が更新に失敗し続ける。
+また、テナント内のメールは DKIM 署名が無いのが普通なので、`imc_suspicious_tag.sh` の unsigned が誤判定しないか実物で確かめる。  
 
 ## 9. ファイル配置
 
