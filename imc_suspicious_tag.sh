@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tag forged mail "suspicious" from its raw header: an invisible character in
-# the From name or Subject, or mail from outside with no DKIM signature.
+# the From name or Subject, or mail from outside with no DKIM signature or
+# no Date header.
 # See imc_suspicious_tag.py for the signals and why they were chosen.
 # The suspicious tag is owned by this script and recomputed for every message
 # handed to it, so pass the full list ('*'), never a filtered one.

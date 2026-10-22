@@ -244,6 +244,7 @@ stays, because it also reports failures in the notification (it is idempotent, s
 
 - **hidden**: the sender's display name or the subject contains an invisible format character (Unicode category `Cf`: zero width space, bidi controls, etc.)
 - **unsigned**: the message came from outside (it has `Received`) but has no `DKIM-Signature` at all. A copy of your own sent mail has no `Received`, so it does not fire
+- **nodate**: the message came from outside but has no `Date` header. RFC 5322 requires `Date`, and a real sender's mail program always writes it. Added on 2026-10-22: it caught 7 messages posing as card companies and DKIM-signed with their own domains, which unsigned missed (no false positive). notmuch gives such mail timestamp 0, so the list shows it as `01-01 09:00`
 
 Applied to 181 real messages (excluding Teams), it tagged 34, all of them spam or phishing (no false positive).
 A mismatch between the `From`, `Return-Path` and DKIM `d=` domains was also tried and rejected.

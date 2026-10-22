@@ -246,6 +246,7 @@ imc_mail_list.sh '*' json | imc_tag_apply.sh tag_rules.tsv tag_rules.local.tsv -
 
 - **hidden**: 差出人の表示名か件名に、不可視の書式文字（Unicodeカテゴリ`Cf`。ゼロ幅空白・双方向制御など）がある
 - **unsigned**: 外部から届いた（`Received`がある）のに`DKIM-Signature`が1つも無い。自分の送信控えは`Received`を持たないので当たらない
+- **nodate**: 外部から届いたのに`Date`ヘッダーが無い。`Date`は RFC 5322 の必須ヘッダーで、正規の送信者のメールソフトは必ず書く。2026-10-22 に追加。自前ドメインで DKIM 署名まで揃えたカード会社騙りの 7 件を捕まえた（unsigned では漏れていた。誤判定0）。notmuch はこういうメールの時刻を 0 とするので、一覧では`01-01 09:00`と表示される
 
 実メール181件（Teams除く）に当てた結果は34件で、すべて迷惑メールかフィッシングだった（誤判定0）。
 `From`・`Return-Path`・DKIM `d=`のドメイン不一致も試したが採らなかった。

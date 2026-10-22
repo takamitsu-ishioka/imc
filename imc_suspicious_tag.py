@@ -21,6 +21,12 @@ spam or phishing, no false positive):
             sample signs; the unsigned ones were spam, including mail that
             forged the receiving domain itself. A copy of your own sent mail
             has no Received header and is not caught.
+  nodate    the message came in from outside and has no Date header. RFC
+            5322 requires Date, and a real sender's mail program always
+            writes it (tried on 2026-10-22: 7 hits, all phishing posing as
+            card companies and signed with their own domains, which unsigned
+            misses; no false positive). notmuch gives such mail timestamp 0,
+            so it also shows as 01-01 09:00 in the list.
 
 Tried and dropped: From / Return-Path / DKIM d= domain mismatch. Phishing
 senders sign with domains they registered themselves, so the domains agree;
@@ -66,6 +72,8 @@ def reasons_of(path):
         reasons.append("hidden")
     if message.get_all("Received") and not message.get_all("DKIM-Signature"):
         reasons.append("unsigned")
+    if message.get_all("Received") and not message.get_all("Date"):
+        reasons.append("nodate")
     return reasons
 
 
