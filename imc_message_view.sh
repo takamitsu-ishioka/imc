@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Full-screen viewer for messages from every route (mail and Teams), in one
-# terminal: the list with checkboxes on the left, the raw header (top right)
+# terminal: the list with checkboxes on the left, the header (top right, MIME
+# encoded words decoded, From and Subject highlighted)
 # and the body (bottom right) of the message being viewed, the keys at the
 # bottom. One pane has the focus (Tab cycles list/header/body, Left = list,
 # Right = body); Up/Down, PgUp/PgDn and Home/End move within that pane.

@@ -5,7 +5,10 @@ Arguments: <query> (a notmuch query; the wrapper turns NEW into
 
 Layout:
   left         the messages, with checkboxes
-  right top    the raw header of the message being viewed
+  right top    the header of the message being viewed: as in the file, except
+               that fields with MIME encoded words (=?UTF-8?B?...?=) are decoded,
+               invisible format characters (bidi controls, zero width space)
+               are shown as <U+XXXX>, and From and Subject are highlighted
   right bottom its body: every text part decoded, then a list of the other parts
   bottom       the key bindings
 
@@ -41,6 +44,7 @@ the row, in the list); the wheel scrolls the pane under the pointer.
 import curses
 import datetime
 import email
+import email.header
 import email.policy
 import json
 import locale
@@ -61,6 +65,7 @@ KEYS = ("v:open/close right pane  Enter:view  Tab/←→:focus  ↑↓ PgUp/PgDn
         "a/A:all/none  t:tag filter  !:flag  d:delete  f:sender nonessential  u:undo  r:reload  q:quit  "
         "mouse drag:copy in one pane  wheel:scroll")
 PANES = ("list", "header", "body")   # Tab cycles in this order
+HIGHLIGHT_FIELDS = ("from", "subject")   # header fields drawn in the highlight color
 # Ctrl+Home / Ctrl+End have no curses constant; ncurses names them kHOM5 / kEND5.
 TOP_KEYS = (curses.KEY_HOME, "g")
 END_KEYS = (curses.KEY_END, "G")
@@ -184,6 +189,31 @@ def teams_text_head(path, limit=200):
     return " ".join(" ".join(lines).split())[:limit]
 
 
+def decode_fields(head):
+    """Decode the MIME encoded words of each header field that has them; other
+    fields keep their folding. Invisible format characters (Unicode Cf), which
+    wrap() would drop silently, are spelled out so forged names stay visible."""
+    fields = []
+    for line in head.splitlines():
+        if fields and line[:1] in (" ", "\t"):
+            fields[-1].append(line)
+        else:
+            fields.append([line])
+    out = []
+    for field in fields:
+        text = "\n".join(field)
+        if "=?" in text and ":" in field[0]:
+            name, _, value = "".join(field).partition(":")
+            try:
+                value = str(email.header.make_header(email.header.decode_header(value)))
+                text = "%s: %s" % (name, value.strip())
+            except (email.errors.HeaderParseError, LookupError, UnicodeDecodeError):
+                pass
+        out.append("".join("<U+%04X>" % ord(c) if unicodedata.category(c) == "Cf" else c
+                           for c in text))
+    return "\n".join(out)
+
+
 def read_message(mid):
     """Return (raw header text, body text) for one message, looked up by Message-ID."""
     files = notmuch("search", "--output=files", "--exclude=false", "id:" + mid).split("\n")
@@ -194,7 +224,7 @@ def read_message(mid):
     head, _, _ = raw.partition(b"\n\n")
     if b"\r\n\r\n" in raw[:len(head) + 4]:
         head = raw.partition(b"\r\n\r\n")[0]
-    header_text = head.decode("utf-8", errors="replace")
+    header_text = decode_fields(head.decode("utf-8", errors="replace"))
 
     msg = email.message_from_bytes(raw, policy=email.policy.default)
     texts, others = [], []
@@ -614,7 +644,7 @@ class Viewer:
         for row in range(head_rows - 1):
             i = self.header_top + row
             text = self.header_lines[i] if i < len(self.header_lines) else ""
-            self.draw_line(1 + row, lw + 1, text, rw, curses.A_NORMAL, "header", i)
+            self.draw_line(1 + row, lw + 1, text, rw, self.header_attr(i), "header", i)
         # right bottom: body
         self.screen.addstr(head_rows, lw + 1, fit(" body %s" % self.position("body"), rw), self.title_attr("body"))
         for row in range(body_rows - head_rows):
@@ -626,6 +656,17 @@ class Viewer:
         bar = "[%s]  %s" % (self.status, KEYS)
         self.screen.addstr(rows - 1, 0, fit(bar, cols - 1), curses.A_REVERSE)
         self.screen.refresh()
+
+    def header_attr(self, i):
+        """The highlight for header line i when it belongs to a From or Subject
+        field (its first line, a folded part of it, or a continuation line)."""
+        if i >= len(self.header_lines):
+            return curses.A_NORMAL
+        start = i
+        while start > 0 and (self.header_folded[start - 1] or self.header_lines[start][:1] == " "):
+            start -= 1
+        name = self.header_lines[start].partition(":")[0].strip().lower()
+        return self.highlight if name in HIGHLIGHT_FIELDS else curses.A_NORMAL
 
     # --- mouse selection -----------------------------------------------
     def list_line(self, i):
@@ -765,6 +806,12 @@ class Viewer:
     # --- loop ----------------------------------------------------------
     def run(self):
         curses.curs_set(0)
+        self.highlight = curses.A_BOLD
+        if curses.has_colors():
+            curses.start_color()
+            curses.use_default_colors()
+            curses.init_pair(1, curses.COLOR_YELLOW, -1)
+            self.highlight = curses.color_pair(1) | curses.A_BOLD
         curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
         curses.mouseinterval(0)   # report press and release, not clicks
         sys.stdout.write(DRAG_ON)
