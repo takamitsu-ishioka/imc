@@ -40,6 +40,9 @@ terminal's own selection would run across the panes), and releasing copies
 it to the Windows clipboard through clip.exe. Lines folded to fit the pane
 are joined back, so a long URL is copied whole. A click focuses the pane (and
 the row, in the list); the wheel scrolls the pane under the pointer.
+Ctrl+A selects all the text of the focused pane, and Ctrl+C copies the
+selection (the terminal runs in raw mode so that Ctrl+C arrives as a key
+instead of interrupting the viewer; q quits).
 """
 import curses
 import datetime
@@ -63,7 +66,7 @@ NONESSENTIAL = "nonessential"
 LAST_QUERY = os.path.join(SCRIPT_DIR, "_var", "view_last_query")
 KEYS = ("v:open/close right pane  Enter:view  Tab/←→:focus  ↑↓ PgUp/PgDn Home/End:move in focus  Space:check (check,move,check = range)  "
         "a/A:all/none  t:tag filter  !:flag  d:delete  f:sender nonessential  u:undo  r:reload  q:quit  "
-        "mouse drag:copy in one pane  wheel:scroll")
+        "mouse drag:copy in one pane  Ctrl+A:select pane  Ctrl+C:copy  wheel:scroll")
 PANES = ("list", "header", "body")   # Tab cycles in this order
 HIGHLIGHT_FIELDS = ("from", "subject")   # header fields drawn in the highlight color
 # Ctrl+Home / Ctrl+End have no curses constant; ncurses names them kHOM5 / kEND5.
@@ -786,12 +789,31 @@ class Viewer:
             if self.sel["a"] == self.sel["b"]:
                 self.click(pane, line)
                 return
-            text = self.selected_text()
-            try:
-                copy_to_clipboard(text)
-                self.status = "copied %d characters" % len(text)
-            except (OSError, subprocess.CalledProcessError) as error:
-                self.status = "clip.exe failed: %s" % error
+            self.copy_selection()
+
+    def copy_selection(self):
+        if not self.sel:
+            self.status = "nothing selected (drag, or Ctrl+A for the whole pane)"
+            return
+        text = self.selected_text()
+        try:
+            copy_to_clipboard(text)
+            self.status = "copied %d characters" % len(text)
+        except (OSError, subprocess.CalledProcessError) as error:
+            self.status = "clip.exe failed: %s" % error
+
+    def select_pane(self):
+        """Select every line of the focused pane, as if dragged from its first
+        character to its last."""
+        pane = self.focus if self.right_open else "list"
+        lines, _ = self.pane_lines(pane)
+        if not lines:
+            self.sel = None
+            self.status = "nothing to select"
+            return
+        last = len(lines) - 1
+        self.sel = {"pane": pane, "a": (0, 0), "b": (last, max(len(lines[last]) - 1, 0)), "drag": False}
+        self.status = "selected all of %s (Ctrl+C to copy)" % pane
 
     def click(self, pane, line):
         """A click without a drag: focus the pane, and in the list the row."""
@@ -806,6 +828,7 @@ class Viewer:
     # --- loop ----------------------------------------------------------
     def run(self):
         curses.curs_set(0)
+        curses.raw()   # Ctrl+C arrives as "\x03" (copy), not as SIGINT
         self.highlight = curses.A_BOLD
         if curses.has_colors():
             curses.start_color()
@@ -822,8 +845,14 @@ class Viewer:
             if key == curses.KEY_MOUSE:
                 self.mouse()
                 continue
+            if key == "\x03":     # Ctrl+C
+                self.copy_selection()
+                continue
+            if key == "\x01":     # Ctrl+A
+                self.select_pane()
+                continue
             if self.sel and not self.sel.get("drag"):
-                self.sel = None   # any key clears a finished selection
+                self.sel = None   # any other key clears a finished selection
             if key in (curses.KEY_DOWN, "j"):
                 self.move(1)
             elif key in (curses.KEY_UP, "k"):

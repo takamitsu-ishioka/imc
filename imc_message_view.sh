@@ -26,7 +26,8 @@
 # Mouse: a drag selects text inside the pane where it started (the terminal's
 # own selection runs across the panes) and copies it to the Windows clipboard
 # with clip.exe, folded lines joined back; a click focuses a pane or row, and
-# the wheel scrolls the pane under the pointer.
+# the wheel scrolls the pane under the pointer. Ctrl+A selects the whole
+# focused pane and Ctrl+C copies the selection (q quits, not Ctrl+C).
 # Viewing a message marks it read.
 # <query> is a notmuch query, NEW for every unread message that is neither
 # suspicious (see imc_suspicious_tag.sh) nor nonessential, or LAST for the
